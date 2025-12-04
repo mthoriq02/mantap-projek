@@ -1,9 +1,12 @@
 from customtkinter import CTk, CTkEntry, CTkButton, CTkFont, CTkFrame, CTkLabel, set_appearance_mode, set_default_color_theme
 from register import RegisterPage
+from database import c, conn
 
 class LoginPage(CTkFrame):
+    
     def __init__(self, parent, controller):
         super().__init__(parent, width=1000, height=700)
+        self.controller = controller
 
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
@@ -64,6 +67,18 @@ class LoginPage(CTkFrame):
                                        pady=0,
                                        sticky='w'
                                        )
+        self.error_label = CTkLabel(username_frame,
+                                        text='username atau password salah',
+                                        font=CTkFont(size=10,
+                                                    family='Calibri'),
+                                        text_color='#FF0000'
+                                        )
+        self.error_label.grid(row=0,
+                                       column=0,
+                                       columnspan=2,
+                                       pady=0,
+                                       sticky='w'
+                                       )
         self.username_entry = CTkEntry(username_frame,
                                   placeholder_text='Masukkan Username',
                                   width=300,
@@ -77,18 +92,8 @@ class LoginPage(CTkFrame):
                             columnspan=2,
                             pady=0
                             )
-        self.password_error_label = CTkLabel(password_frame,
-                                             text='password salah',
-                                             font=CTkFont(size=10,
-                                                          family='Calibri'),
-                                             text_color='#FF0000'
-                                             )
-        self.password_error_label.grid(row=0,
-                                       column=0,
-                                       columnspan=2,
-                                       pady=0,
-                                       sticky='w'
-                                       )
+        self.username_entry.bind('<FocusOut>', self.username_null)
+        self.username_entry.bind('<KeyRelease>', self.username_null)       
         self.password_entry = CTkEntry(password_frame,
                                        placeholder_text='Masukkan Password',
                                        font=CTkFont(size=14,
@@ -108,7 +113,8 @@ class LoginPage(CTkFrame):
                                                    family='Poppins'
                                                    ),
                                       width=300,
-                                      height=40
+                                      height=40,
+                                      command=self.login_button
                                       )
         self.login_button.grid(row=0,
                                column=0,
@@ -120,17 +126,47 @@ class LoginPage(CTkFrame):
                                                    family='Calibri',
                                                    underline=True
                                                    ),
-                                      text_color="#0D5BC0"
+                                      text_color='#0D5BC0'
                                       )
         self.link_register.grid(row=1,
                                 column=0,
                                 pady=0,
                                 sticky='e'
                                 )
-        self.link_register.bind('<Button-1>', self.login_click)
+        self.link_register.bind('<Button-1>', self.register_link)
 
-    def login_click(self, event=None):
+    def register_link(self, event=None):
         self.controller.show_frame(RegisterPage)
+
+    def login_button(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+
+        c.execute(
+            "select * from users_accounts_data where username = ? and password = ?",
+            (username, password)
+        )
+        result = c.fetchone()
+
+        if username != "":
+            if result:
+                print('halo')
+
+            else:
+                self.error_label.grid_configure(row=1)
+
+        else:
+            self.username_error_label.grid_configure(row=1)
+
+    def username_null(self, event=None):
+        username = self.username_entry.get()
+
+        if username == "":
+            self.username_error_label.grid_configure(row=1)
+
+        else:
+            self.username_error_label.grid_configure(row=0)
+
 
 if __name__ == "__main__":
     root = LoginPage()
