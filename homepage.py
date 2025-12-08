@@ -10,9 +10,7 @@ from open_excel import all_data
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-# ==============================================================================
 # KELAS CHATBOT
-# ==============================================================================
 class ShoppingChatBot(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
@@ -20,7 +18,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
         self.master_app = master
         self.title("Chat Layanan Pelanggan 💬")
         self.geometry("500x500") 
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.grab_set() 
         self.protocol("WM_DELETE_WINDOW", self.on_close) 
 
@@ -423,11 +421,21 @@ class PaymentWindow(ctk.CTkToplevel):
     def __init__(self, master, cart_items, cart_total, format_price_func, weapons_data):
         super().__init__(master)
         self.master_app = master
-        self.cart_items = cart_items
+        # self.cart_items = cart_items <--- Dihapus, akan diambil langsung di refresh_display
         self.cart_total = cart_total
         self.format_price = format_price_func
         self.weapons_data = weapons_data 
         self.selected_payment_method = tk.StringVar(value="") 
+        
+        # Tambahan: Menyimpan mapping Nama -> Path Gambar/Data
+        self.weapon_data_map = {item['Nama Senjata']: item for item in weapons_data}
+        self.image_references = {} # Untuk mencegah garbage collection gambar
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # MODIFIKASI: STATE BARU UNTUK SELEKSI ITEM CHECKOUT
+        # Menggunakan dictionary untuk melacak status terpilih (tk.BooleanVar) per nama item
+        self.selected_items_state = {} 
+
 
         self.title("Proses Pembayaran")
         self.geometry("500x500") 
@@ -501,6 +509,9 @@ class PaymentWindow(ctk.CTkToplevel):
     def refresh_display(self):
         """Memuat ulang semua konten keranjang dan total harga."""
         
+        # PERBAIKAN VITAL: Selalu ambil data keranjang terbaru dari aplikasi utama
+        self.cart_items = self.master_app.cart_items
+
         for widget in self.main_content_frame.winfo_children():
             widget.destroy()
 
@@ -511,50 +522,138 @@ class PaymentWindow(ctk.CTkToplevel):
 
         self.create_payment_selection_section(self.main_content_frame)
 
-        self.cart_total = self.master_app.cart_total 
-        self.total_amount_label.configure(text=self.format_price(self.cart_total))
+        # NOTE: self.cart_total diupdate di update_checkout_total, bukan diambil dari master_app.
+        # self.cart_total = self.master_app.cart_total # DIHAPUS
+        # self.total_amount_label.configure(text=self.format_price(self.cart_total)) # DIHAPUS
         
         if not self.selected_payment_method.get() and self.cart_total > 0:
             self.selected_payment_method.set(self.payment_methods["Transfer Bank"][0])
 
+    # FUNGSI BARU: Menghitung ulang total berdasarkan Checkbox yang dipilih
+    def update_checkout_total(self):
+        """Menghitung ulang total pembayaran hanya berdasarkan item yang terpilih."""
+        
+        new_total = 0
+        
+        # Iterasi melalui state pilihan, bukan hanya self.cart_items
+        for item_name, is_selected_var in self.selected_items_state.items():
+            # Cek apakah item ini masih ada di keranjang
+            if item_name in self.cart_items:
+                # Cek apakah checkbox-nya terpilih
+                if is_selected_var.get():
+                    # Tambahkan total harga item ke new_total
+                    new_total += self.cart_items[item_name]['total_price']
+        
+        # Perbarui tampilan label total
+        self.total_amount_label.configure(text=self.format_price(new_total))
+        # Simpan total baru ini ke self.cart_total (penting untuk process_payment)
+        self.cart_total = new_total
+
     def create_cart_detail_section(self, parent_frame):
-        """Membuat bagian detail keranjang dengan tombol tambah/kurang."""
+        """Membuat bagian detail keranjang dengan tombol tambah/kurang, gambar, dan CHECKBOX."""
         
         item_container_frame = ctk.CTkFrame(parent_frame, fg_color="gray25", corner_radius=10)
         item_container_frame.pack(fill="x", padx=10, pady=(10, 5))
 
         header_label = ctk.CTkLabel(item_container_frame, 
-                                    text="list isi keranjang kamu \U0001F642:", 
+                                    # MODIFIKASI TEXT
+                                    text="list isi keranjang kamu 😌: (Pilih item untuk Checkout)", 
                                     font=ctk.CTkFont(size=16, weight="bold"))
         header_label.pack(anchor="w", padx=15, pady=(10, 5))
 
+        # Menggunakan self.cart_items yang sudah diperbarui di refresh_display
         if not self.cart_items:
             no_item_label = ctk.CTkLabel(item_container_frame, text="Keranjang kosong. Tidak ada yang bisa di-checkout.", text_color="gray")
             no_item_label.pack(padx=15, pady=20)
+            self.update_checkout_total() # Panggil update_checkout_total untuk memastikan total 0
             return
+
+        # Reset references
+        self.image_references.clear()
+        
+        # MODIFIKASI: Inisialisasi/Cleanup state seleksi
+        # Buat salinan kunci state saat ini
+        items_to_remove_from_state = list(self.selected_items_state.keys()) 
+        
+        for name in self.cart_items.keys():
+            if name not in self.selected_items_state:
+                 # Jika ada item baru, inisialisasi sebagai terpilih (True)
+                self.selected_items_state[name] = tk.BooleanVar(value=True) 
+            # Jika item ditemukan, hapus dari daftar yang akan dihapus
+            if name in items_to_remove_from_state:
+                items_to_remove_from_state.remove(name)
+
+        # Hapus state untuk item yang tidak ada lagi di cart
+        for name in items_to_remove_from_state:
+            del self.selected_items_state[name]
 
         for name, data in self.cart_items.items():
             item_data_frame = ctk.CTkFrame(item_container_frame, fg_color="transparent")
             item_data_frame.pack(fill="x", padx=10, pady=5)
-            item_data_frame.grid_columnconfigure(0, weight=3) 
-            item_data_frame.grid_columnconfigure(1, weight=1) 
-            item_data_frame.grid_columnconfigure(2, weight=2)
+            # MODIFIKASI GRID: Kolom 0 Checkbox, Kolom 1 Gambar, Kolom 2 Nama, Kolom 3 Qty, Kolom 4 Harga
+            item_data_frame.grid_columnconfigure(0, weight=0) # Checkbox
+            item_data_frame.grid_columnconfigure(1, weight=0) # Gambar
+            item_data_frame.grid_columnconfigure(2, weight=2) # Nama
+            item_data_frame.grid_columnconfigure(3, weight=1) # Qty Control
+            item_data_frame.grid_columnconfigure(4, weight=1) # Harga
+            
+            # --- 0. CHECKBOX PEMILIHAN ---
+            # Menggunakan CTkCheckBox yang di-customize (lingkaran)
+            checkbox = ctk.CTkCheckBox(
+                item_data_frame, 
+                text="", 
+                variable=self.selected_items_state[name], 
+                command=self.update_checkout_total, # Panggil update total saat diubah
+                width=20, height=20, corner_radius=10, 
+                fg_color="#00FF7F" 
+            )
+            checkbox.grid(row=0, column=0, padx=(10, 5), sticky="w")
 
+
+            # --- 1. MENAMPILKAN GAMBAR (Pindah ke Kolom 1) ---
+            weapon_info = self.weapon_data_map.get(name)
+            if weapon_info:
+                image_path = os.path.join(self.base_dir, 'picture_resource', weapon_info['Gambar'])
+                image_size = (50, 30) # Ukuran kecil untuk keranjang
+
+                try:
+                    original_image = Image.open(image_path)
+                    resized_image = original_image.resize(image_size, Image.Resampling.LANCZOS)
+                    weapon_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=image_size)
+                    
+                    # Simpan referensi
+                    self.image_references[name] = weapon_image
+
+                    image_label = ctk.CTkLabel(item_data_frame, image=weapon_image, text="")
+                    image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
+                except:
+                    # Fallback jika gambar tidak ditemukan
+                    image_label = ctk.CTkLabel(item_data_frame, text="🖼️", font=ctk.CTkFont(size=20))
+                    image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
+            else:
+                 # Fallback jika data tidak ditemukan
+                image_label = ctk.CTkLabel(item_data_frame, text="❓", font=ctk.CTkFont(size=20))
+                image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
+            
+            
+            # --- 2. NAMA BARANG (Pindah ke Kolom 2) ---
             name_label = ctk.CTkLabel(item_data_frame,
                                       text=name,
                                       font=ctk.CTkFont(size=14, weight="bold"),
-                                      justify="left")
-            name_label.grid(row=0, column=0, padx=10, sticky="w")
+                                      justify="left",
+                                      wraplength=150)
+            name_label.grid(row=0, column=2, padx=10, sticky="w")
 
-            # Kontrol Kuantitas (Frame)
+            # Kontrol Kuantitas (Frame) - Pindah ke Kolom 3
             qty_control_frame = ctk.CTkFrame(item_data_frame, fg_color="gray20")
-            qty_control_frame.grid(row=0, column=1, padx=5, sticky="ew")
+            qty_control_frame.grid(row=0, column=3, padx=5, sticky="ew")
             qty_control_frame.grid_columnconfigure((0, 2), weight=1)
 
             minus_button = ctk.CTkButton(qty_control_frame, 
                                         text="➖", 
                                         width=30,
-                                        command=lambda n=name: self.update_item_quantity(n, -1))
+                                        # MODIFIKASI COMMAND: Memastikan total diupdate setelah kuantitas berubah
+                                        command=lambda n=name: [self.update_item_quantity(n, -1)]) 
             minus_button.grid(row=0, column=0, padx=2, pady=5)
 
             qty_label = ctk.CTkLabel(qty_control_frame, 
@@ -565,22 +664,28 @@ class PaymentWindow(ctk.CTkToplevel):
             plus_button = ctk.CTkButton(qty_control_frame, 
                                         text="➕", 
                                         width=30,
-                                        command=lambda n=name: self.update_item_quantity(n, 1))
+                                        # MODIFIKASI COMMAND: Memastikan total diupdate setelah kuantitas berubah
+                                        command=lambda n=name: [self.update_item_quantity(n, 1)])
             plus_button.grid(row=0, column=2, padx=2, pady=5)
             
-            # Subtotal
+            # Subtotal (Menggunakan data yang sudah diperbarui) - Pindah ke Kolom 4
             price_label = ctk.CTkLabel(item_data_frame,
                                        text=self.format_price(data['total_price']),
                                        text_color="#00FF7F",
                                        font=ctk.CTkFont(size=14, weight="bold"))
-            price_label.grid(row=0, column=2, padx=10, sticky="e")
+            price_label.grid(row=0, column=4, padx=10, sticky="e")
             
-        total_summary_frame = ctk.CTkFrame(item_container_frame, fg_color="transparent")
-        total_summary_frame.pack(fill="x", padx=10, pady=(10, 10))
-        total_summary_frame.grid_columnconfigure(0, weight=1)
+        # Blok kode ini dihilangkan/dijadikan komentar untuk menghapus tampilan subtotal barang
+        # total_summary_frame = ctk.CTkFrame(item_container_frame, fg_color="transparent")
+        # total_summary_frame.pack(fill="x", padx=10, pady=(10, 10))
+        # total_summary_frame.grid_columnconfigure(0, weight=1)
         
-        ctk.CTkLabel(total_summary_frame, text="Subtotal Barang:", font=ctk.CTkFont(size=16)).grid(row=0, column=0, sticky="w", padx=10)
-        ctk.CTkLabel(total_summary_frame, text=self.format_price(self.cart_total), font=ctk.CTkFont(size=16, weight="bold"), text_color="#00FF7F").grid(row=0, column=1, sticky="e", padx=10)
+        # ctk.CTkLabel(total_summary_frame, text="Subtotal Barang:", font=ctk.CTkFont(size=16)).grid(row=0, column=0, sticky="w", padx=10)
+        # # Label ini akan di-update oleh update_checkout_total
+        # ctk.CTkLabel(total_summary_frame, text=self.format_price(self.master_app.cart_total), font=ctk.CTkFont(size=16, weight="bold"), text_color="#00FF7F").grid(row=0, column=1, sticky="e", padx=10)
+
+        # Panggil perhitungan total setelah semua widget dibuat (penting untuk tampilan awal)
+        self.update_checkout_total() 
 
     def create_payment_selection_section(self, parent_frame):
         """Membuat bagian pemilihan metode pembayaran."""
@@ -606,12 +711,14 @@ class PaymentWindow(ctk.CTkToplevel):
     def update_item_quantity(self, item_name, delta):
         """Memperbarui kuantitas item di keranjang utama."""
         
-        if item_name not in self.cart_items:
+        # Mengambil data dari keranjang utama
+        cart_data = self.master_app.cart_items
+        
+        if item_name not in cart_data:
             return
 
-        unit_price = self.cart_items[item_name]['price_per_unit']
-            
-        current_qty = self.cart_items[item_name]['quantity']
+        unit_price = cart_data[item_name]['price_per_unit']
+        current_qty = cart_data[item_name]['quantity']
         new_qty = current_qty + delta
 
         if new_qty < 0:
@@ -619,21 +726,29 @@ class PaymentWindow(ctk.CTkToplevel):
 
         if new_qty == 0:
             del self.master_app.cart_items[item_name]
+            # Hapus state pilihan ketika item dihapus
+            if item_name in self.selected_items_state:
+                del self.selected_items_state[item_name]
         else:
             self.master_app.cart_items[item_name]['quantity'] = new_qty
             self.master_app.cart_items[item_name]['total_price'] = new_qty * unit_price
 
+        # Memperbarui total dan count di footer aplikasi utama
         self.master_app.update_cart_display() 
+        
+        # Merefresh tampilan PaymentWindow dengan data terbaru
+        # refresh_display akan memanggil create_cart_detail_section, yang akan memanggil update_checkout_total
         self.refresh_display()
 
 
     def process_payment(self):
         """Logika simulasi pembayaran."""
         
-        self.cart_total = self.master_app.cart_total # Ambil total terbaru
+        # self.cart_total sudah di-update oleh update_checkout_total
         
+        # MODIFIKASI: Pesan peringatan disesuaikan dengan logika checkout
         if self.cart_total == 0:
-            messagebox.showwarning("Peringatan", "Keranjang Anda kosong! Silakan tambahkan item terlebih dahulu.")
+            messagebox.showwarning("Peringatan", "Total pembayaran 0. Silakan pilih item untuk di-checkout atau tambahkan item ke keranjang.")
             return
 
         selected_method = self.selected_payment_method.get()
@@ -641,6 +756,16 @@ class PaymentWindow(ctk.CTkToplevel):
         if not selected_method:
             messagebox.showwarning("Peringatan", "Silakan pilih salah satu metode pembayaran.")
             return
+
+        # MODIFIKASI: Logika untuk menghapus HANYA item yang terpilih untuk pembayaran
+        items_to_keep = {}
+        for item_name, data in self.master_app.cart_items.items():
+            is_selected_var = self.selected_items_state.get(item_name)
+            
+            # Jika item TIDAK terpilih untuk checkout (atau state-nya entah mengapa hilang), maka item tersebut dipertahankan.
+            # is_selected_var is None hanya terjadi jika ada bug, tapi jika ada, kita asumsikan TIDAK terpilih.
+            if is_selected_var is None or not is_selected_var.get():
+                items_to_keep[item_name] = data
 
         # Simulasi tampilan detail transaksi
         if "Transfer Bank" in selected_method or selected_method in self.payment_methods["Transfer Bank"]:
@@ -658,7 +783,9 @@ class PaymentWindow(ctk.CTkToplevel):
         messagebox.showinfo("Pembayaran Diproses", 
                             f"Transaksi sedang diproses dengan metode:\n**{selected_method}**\n\nTotal: {self.format_price(self.cart_total)}\n\n{detail_msg}\n\nTerima kasih atas pembelian Anda!")
         
-        self.master_app.reset_cart()
+        # Setelah sukses, reset keranjang utama hanya dengan item yang tidak di-checkout (items_to_keep)
+        self.master_app.cart_items = items_to_keep
+        self.master_app.update_cart_display()
         self.destroy()
 
 
@@ -683,7 +810,6 @@ class WeaponShowcaseApp(ctk.CTk):
         # PERUBAHAN KRITIS: Menggunakan dictionary untuk melacak kuantitas
         self.cart_items = {} 
         self.cart_total = 0
-        self.checkout_open = False 
         self.chat_open = False 
 
         # --- MEMUAT LOGO BARU DARI FILE ---
@@ -803,6 +929,14 @@ class WeaponShowcaseApp(ctk.CTk):
 
     def _format_price(self, price_int):
         return f"Rp {price_int:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
+    
+    # Fungsi Helper Baru untuk mencari data senjata
+    def get_weapon_data_by_name(self, name):
+        """Mencari data senjata lengkap berdasarkan Nama Senjata."""
+        for weapon in self.weapons:
+            if weapon['Nama Senjata'] == name:
+                return weapon
+        return None
 
     # PERUBAHAN: Logika update display untuk dictionary
     def update_cart_display(self):
@@ -828,24 +962,13 @@ class WeaponShowcaseApp(ctk.CTk):
 
     # PERUBAHAN: Memanggil PaymentWindow dan mengirim data senjata
     def open_checkout_window(self, event=None):
-        if self.checkout_open:
-            return 
-            
-        self.checkout_open = False
-        
         checkout = PaymentWindow(
             master=self,
-            cart_items=self.cart_items,
-            cart_total=self.cart_total,
+            cart_items=self.cart_items, # Data keranjang
+            cart_total=self.cart_total, # Total harga
             format_price_func=self._format_price,
             weapons_data=self.weapons # Mengirim data senjata lengkap
         )
-        
-        checkout.protocol("WM_DELETE_WINDOW", self.on_checkout_close) 
-
-    def on_checkout_close(self):
-        self.checkout_open = True
-        pass
 
     # PERUBAHAN: Logika buy_weapon untuk dictionary
     def buy_weapon(self, weapon_data):
