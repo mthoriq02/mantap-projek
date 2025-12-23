@@ -116,58 +116,31 @@ class LoginPage(ctk.CTkFrame):
             )
 
         # frame tombol
-        button_frame = ctk.CTkFrame(
-            login_frame,
-            fg_color='transparent'
-            )
-        button_frame.grid(
-            row=4,
-            column=0
-            )
+        button_frame = ctk.CTkFrame(login_frame, fg_color='transparent')
+        button_frame.grid(row=4,column=0)
         
         # label judul login
         title_label = ctk.CTkLabel(
-            login_frame,
-            text='Login',
+            login_frame, text='Login',
             font=ctk.CTkFont(size=26, family='Poppins', weight='bold')
-        )
-        title_label.grid(
-            row=0,
-            column=0,
-            pady=(50, 20),
-            sticky='we'
             )
+        title_label.grid(row=0, column=0, pady=(50, 20), sticky='we')
         
         # sub-judul
         subtitle_label = ctk.CTkLabel(
             login_frame,
             text='Masuk ke akun Anda',
-            font=ctk.CTkFont(
-                size=14,
-                family='Arial',
-                weight='normal'
+            font=ctk.CTkFont(size=14, family='Arial', weight='normal')
             )
-        )
-        subtitle_label.grid(
-            row=1,
-            column=0,
-            pady=(0, 80),
-            sticky='ew'
-        )
+        subtitle_label.grid(row=1, column=0, pady=(0, 80), sticky='ew')
 
         # label error username kosong
         self.username_error_label = ctk.CTkLabel(
             username_frame,
             text='username harus diisi',
             font=ctk.CTkFont(size=10, family='Poppins'),
-            text_color='#FF0000'
-        )
-        self.username_error_label.grid(
-            row=0,
-            column=0, 
-            columnspan=2,
-            sticky='w'
-            )
+            text_color='#FF0000')
+        self.username_error_label.grid(row=0, column=0, columnspan=2, sticky='w')
 
         # label error login gagal
         self.error_label = ctk.CTkLabel(
@@ -175,27 +148,17 @@ class LoginPage(ctk.CTkFrame):
             text='username atau password salah',
             font=ctk.CTkFont(size=10, family='Calibri'),
             text_color='#FF0000'
-        )
-        self.error_label.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            sticky='w'
             )
+        self.error_label.grid(row=0, column=0, columnspan=2, sticky='w')
 
         # input username
         self.username_entry = ctk.CTkEntry(
             username_frame,
             placeholder_text='Masukkan Username',
-            width=300, height=40,
-            corner_radius=8,
+            width=300, height=40, corner_radius=8,
             font=ctk.CTkFont(size=14, family='Poppins')
-        )
-        self.username_entry.grid(
-            row=0,
-            column=0,
-            columnspan=2
             )
+        self.username_entry.grid(row=0, column=0, columnspan=2)
         
         # validasi username setiap perubahan
         self.username_entry.bind('<FocusOut>', self.username_null)
@@ -205,38 +168,22 @@ class LoginPage(ctk.CTkFrame):
         self.password_entry = ctk.CTkEntry(
             password_frame,
             placeholder_text='Masukkan Password',
-            width=300,
-            height=40,
-            corner_radius=8,
+            width=300, height=40, corner_radius=8,
             font=ctk.CTkFont(size=14, family='Poppins'),
             show='•'
-        )
-        self.password_entry.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            pady=(0, 5)
             )
+        self.password_entry.grid(row=0, column=0, columnspan=2, pady=(0, 5))
         self.hidden_var = ctk.BooleanVar(value=False)
         self.password_hid = ctk.CTkCheckBox(
             password_frame,
-            border_width=1,
-            width=1,
-            height=1,
+            border_width=1, width=1, height=1,
             text='Perlihatkan password',
             font=ctk.CTkFont(size=11, family='Poppins'),
             variable=self.hidden_var,
-            onvalue=True,
-            offvalue=False,
+            onvalue=True, offvalue=False,
             command=self.hidden_password
-        )
-        self.password_hid.grid(
-            row=1,
-            column=0,
-            columnspan=2,
-            pady=(2, 2),
-            sticky='w'
-        )
+            )
+        self.password_hid.grid(row=1, column=0, columnspan=2, pady=(2, 2), sticky='w')
 
         # tombol login
         self.login_button = ctk.CTkButton(
@@ -246,12 +193,8 @@ class LoginPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, family='Poppins'),
             command=self.login_button,
             corner_radius=10
-        )
-        self.login_button.grid(
-            row=0,
-            column=0,
-            columnspan=2
             )
+        self.login_button.grid(row=0, column=0, columnspan=2)
 
         # link ke register page
         self.link_register = ctk.CTkLabel(
@@ -259,12 +202,8 @@ class LoginPage(ctk.CTkFrame):
             text='Belum punya akun? Daftar',
             font=ctk.CTkFont(size=10, family='Calibri', underline=True),
             text_color='#0D5BC0'
-        )
-        self.link_register.grid(
-            row=1,
-            column=0,
-            sticky='e'
             )
+        self.link_register.grid(row=1, column=0, sticky='e')
         self.link_register.bind('<Button-1>', self.register_link)
 
     def hidden_password(self):
@@ -431,11 +370,7 @@ class RegisterPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, family='Poppins'),
             corner_radius=8
         )
-        self.username_entry.grid(
-            row=0,
-            column=0,
-            columnspan=2
-            )
+        self.username_entry.grid(row=0, column=0, columnspan=2)
         self.username_entry.bind('<FocusOut>', self.username_validate)
         self.username_entry.bind('<KeyRelease>', self.username_validate)
 
@@ -447,12 +382,8 @@ class RegisterPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, family='Poppins'),
             show= '•',
             corner_radius=8
-        )
-        self.password_entry.grid(
-            row=0,
-            column=0,
-            columnspan=2
             )
+        self.password_entry.grid(row=0, column=0, columnspan=2)
         self.password_entry.bind('<KeyRelease>', self.password_validate)
         self.password_entry.bind('<FocusOut>', self.password_validate)
         self.password_entry.bind('<KeyRelease>', self.password_check_validate)
@@ -462,22 +393,14 @@ class RegisterPage(ctk.CTkFrame):
         self.hidden_var_1 = ctk.BooleanVar(value=False)
         self.password_hid = ctk.CTkCheckBox(
             password_frame,
-            border_width=1,
-            width=1,
-            height=1,
+            border_width=1, width=1, height=1,
             text='Perlihatkan password',
             font=ctk.CTkFont(size=11, family='Poppins'),
             variable=self.hidden_var_1,
-            onvalue=True,
-            offvalue=False,
+            onvalue=True, offvalue=False,
             command=self.show_password
-        )
-        self.password_hid.grid(
-            row=1,
-            column=0,
-            pady=5,
-            sticky='w'
-        )
+            )
+        self.password_hid.grid(row=1, column=0, pady=5, sticky='w')
 
         # info validasi password
         self.password_info_label = ctk.CTkLabel(
@@ -485,12 +408,8 @@ class RegisterPage(ctk.CTkFrame):
             text='*password setidaknya harus 8 karakter',
             font=ctk.CTkFont(size=10, family='Calibri'),
             text_color="#8F8383"
-        )
-        self.password_info_label.grid(
-            row=1,
-            column=1,
-            sticky='e'
             )
+        self.password_info_label.grid(row=1, column=1, sticky='e')
 
         # input konfirmasi password
         self.password_check = ctk.CTkEntry(
@@ -500,12 +419,8 @@ class RegisterPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, family='Poppins'),
             show='•',
             corner_radius=8
-        )
-        self.password_check.grid(
-            row=2,
-            column=0,
-            columnspan=2
             )
+        self.password_check.grid(row=2, column=0, columnspan=2)
         self.password_check.bind('<KeyRelease>', self.password_check_validate)
         self.password_check.bind('<FocusOut>', self.password_check_validate)
         
@@ -513,34 +428,22 @@ class RegisterPage(ctk.CTkFrame):
         self.hidden_var_2 = ctk.BooleanVar(value=False)
         self.password_check_hid = ctk.CTkCheckBox(
             password_frame,
-            border_width=1,
-            width=1,
-            height=1,
+            border_width=1, width=1, height=1,
             text='Perlihatkan password',
             font=ctk.CTkFont(size=11, family='Poppins'),
             variable=self.hidden_var_2,
-            onvalue=True,
-            offvalue=False,
+            onvalue=True, offvalue=False,
             command=self.show_password_check
-        )
-        self.password_check_hid.grid(
-            row=3,
-            column=0,
-            pady=5,
-            sticky='w'
-        )
+            )
+        self.password_check_hid.grid(row=3, column=0, pady=5, sticky='w')
         # info konfirmasi password
         self.password_check_info_label = ctk.CTkLabel(
             password_frame,
             text='*masukkan ulang password',
             font=ctk.CTkFont(size=10, family='Calibri'),
             text_color='#8F8383'
-        )
-        self.password_check_info_label.grid(
-            row=3,
-            column=1,
-            sticky='e'
             )
+        self.password_check_info_label.grid(row=3, column=1, sticky='e')
 
         # tombol daftar
         self.button_register = ctk.CTkButton(
@@ -550,7 +453,7 @@ class RegisterPage(ctk.CTkFrame):
             font=ctk.CTkFont(size=16, family='Poppins'),
             command=self.register_button,
             corner_radius=10
-        )
+            )
         self.button_register.grid(row=0, column=0, columnspan=2)
 
         # link ke login
@@ -559,12 +462,8 @@ class RegisterPage(ctk.CTkFrame):
             text='Sudah punya akun? Login',
             text_color='#0D5BC0',
             font=ctk.CTkFont(size=10, family='Calibri', underline=True)
-        )
-        self.login_link.grid(
-            row=1,
-            column=0,
-            sticky='e'
             )
+        self.login_link.grid(row=1,column=0,sticky='e')
         self.login_link.bind('<Button-1>', self.login_open)
         
     def username_validate(self, event=None):
@@ -728,7 +627,7 @@ class WeaponShowcaseApp(ctk.CTkFrame):
                 resized_image = original_image.resize((40, 40), Image.Resampling.LANCZOS)
                 self.logo_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(40, 40))
                 
-                logo_label.configure(image=self.logo_image, text="THE GUN ADDICTION ", compound="left", padx=10)
+                logo_label.configure(image=self.logo_image, text='Guardian', compound="left", padx=10)
                 self.image_references.append(self.logo_image) # Simpan referensi
             except Exception as e:
                 print(f"Error loading logo: {e}")
