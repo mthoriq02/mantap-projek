@@ -2,72 +2,29 @@ import customtkinter as ctk
 import os
 import bcrypt
 import tkinter as tk
-import pygame
-import fnmatch
-from database import c, conn
 from sqlite3 import IntegrityError
-from CTkMessagebox import CTkMessagebox
+from CTkMessagebox import CTkMessagebox 
 from PIL import Image
 from tkinter import messagebox
-from open_excel import all_data
 from datetime import datetime
+from open_excel import all_data
+from database import conn, c
+import pygame
+import fnmatch 
 
-# buat tabel user jika belum ada
 c.execute(
-    "create table if not exists users_accounts_data (username text unique not null, password text not null)" 
+    "create table if not exists users_accounts_data (username text unique, password text)"
 )
+
+# Inisialisasi pygame mixer (diperlukan untuk MusicPlayer)
+try:
+    pygame.mixer.init()
+except Exception as e:
+    print(f"Peringatan: pygame mixer gagal diinisialisasi. Fitur MusicPlayer dinonaktifkan. Error: {e}")
 
 # set tema aplikasi
 ctk.set_appearance_mode('dark')
 ctk.set_default_color_theme('dark-blue')
-
-class App(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-
-        # set judul dan ukuran utama aplikasi
-        self.title('Guardian - Etalase Senjata')
-        self.geometry('1000x700')
-        self.iconbitmap('logo.ico')
-
-        # buat container untuk menampung halaman login & register
-        self.container = ctk.CTkFrame(self)
-        self.container.pack(fill='both', expand=True)
-
-        # konfigurasi grid container
-        self.container.grid_columnconfigure(0, weight=1)
-        self.container.grid_rowconfigure(0, weight=1)
-
-        # dictionary untuk menyimpan halaman
-        self.frames = {}
-        self.frame_list = [LoginPage, RegisterPage, WeaponShowcaseApp]
-        
-        # buat dan tampilkan semua halaman, tetapi hanya raise yang aktif
-        for F in self.frame_list:
-            frame = F(self.container, self)
-            self.frames[F] = frame
-            frame.grid(row=0, column=0, sticky='nsew')
-            
-        # tampilkan halaman login pertama kali
-        self.show_frame(LoginPage)
-
-    def show_frame(self, page):
-        # tampilkan halaman tertentu dengan tkraise
-        frame = self.frames[page]
-        frame.tkraise()
-
-    def open_window_payment(self, caller, cart_items, cart_total, format_price_func, weapons_data):
-        payment = PaymentWindow(
-            parent=self.container,
-            controller=self,
-            caller=caller,
-            cart_items=cart_items,
-            cart_total=cart_total,
-            format_price_func=format_price_func,
-            weapons_data=weapons_data
-        )
-        payment.grid(row=0, column=0, sticky="nsew")
-        payment.tkraise()
 
 # kelas login
 class LoginPage(ctk.CTkFrame):
@@ -79,45 +36,25 @@ class LoginPage(ctk.CTkFrame):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
 
+        # username yang akan dikirimkan
+        self.username = ''
+
         # frame utama login
-        login_frame = ctk.CTkFrame(
-            self, width=380,
-            height=500,
-            corner_radius=12
-            )
-        login_frame.grid(
-            row=0,
-            column=0,
-            padx=(50, 50),
-            pady=(80, 10)
-            )
+        login_frame = ctk.CTkFrame(self, width=380, height=500, corner_radius=12)
+        login_frame.grid(row=0, column=0, padx=(50, 50), pady=(80, 10))
         login_frame.grid_propagate(False)
         login_frame.grid_columnconfigure(0, weight=1)
 
         # frame username dan password
-        username_frame = ctk.CTkFrame(
-            login_frame,
-            fg_color='transparent'
-            )
-        username_frame.grid(
-            row=2,
-            column=0,
-            pady=(0, 20)
-            )
+        username_frame = ctk.CTkFrame(login_frame, fg_color='transparent')
+        username_frame.grid(row=2, column=0, pady=(0, 20))
 
-        password_frame = ctk.CTkFrame(
-            login_frame,
-            fg_color='transparent'
-            )
-        password_frame.grid(
-            row=3,
-            column=0,
-            pady=(0, 20)
-            )
+        password_frame = ctk.CTkFrame(login_frame, fg_color='transparent')
+        password_frame.grid(row=3, column=0, pady=(0, 20))
 
         # frame tombol
         button_frame = ctk.CTkFrame(login_frame, fg_color='transparent')
-        button_frame.grid(row=4,column=0)
+        button_frame.grid(row=4, column=0)
         
         # label judul login
         title_label = ctk.CTkLabel(
@@ -128,8 +65,7 @@ class LoginPage(ctk.CTkFrame):
         
         # sub-judul
         subtitle_label = ctk.CTkLabel(
-            login_frame,
-            text='Masuk ke akun Anda',
+            login_frame, text='Masuk ke akun Anda',
             font=ctk.CTkFont(size=14, family='Arial', weight='normal')
             )
         subtitle_label.grid(row=1, column=0, pady=(0, 80), sticky='ew')
@@ -139,7 +75,8 @@ class LoginPage(ctk.CTkFrame):
             username_frame,
             text='username harus diisi',
             font=ctk.CTkFont(size=10, family='Poppins'),
-            text_color='#FF0000')
+            text_color='#FF0000'
+            )
         self.username_error_label.grid(row=0, column=0, columnspan=2, sticky='w')
 
         # label error login gagal
@@ -182,17 +119,18 @@ class LoginPage(ctk.CTkFrame):
             variable=self.hidden_var,
             onvalue=True, offvalue=False,
             command=self.hidden_password
+        )
+        self.password_hid.grid(
+            row=1, column=0, columnspan=2,
+            pady=(2, 2), sticky='w'
             )
-        self.password_hid.grid(row=1, column=0, columnspan=2, pady=(2, 2), sticky='w')
 
         # tombol login
         self.login_button = ctk.CTkButton(
-            button_frame,
-            text='Login',
+            button_frame, text='Login',
             width=300, height=40,
             font=ctk.CTkFont(size=14, family='Poppins'),
-            command=self.login_button,
-            corner_radius=10
+            command=self.login_button, corner_radius=10
             )
         self.login_button.grid(row=0, column=0, columnspan=2)
 
@@ -219,24 +157,24 @@ class LoginPage(ctk.CTkFrame):
 
     def login_button(self):
         # ambil username & password dari input
-        username = self.username_entry.get()
+        self.username = self.username_entry.get()
         password = self.password_entry.get()
 
         # cek data user dari database
         c.execute(
             "select password from users_accounts_data where username = ?",
-            (username,)
+            (self.username,)
         )
         result = c.fetchone()
 
         # jika username tidak kosong
-        if username != "":
+        if self.username != "":
             # jika username dan password benar
             if result:
                 hashed_password = result[0]
 
                 if bcrypt.checkpw(password.encode('utf-8'), hashed_password):
-                    self.controller.show_frame(WeaponShowcaseApp)
+                    self.controller.open_homepage(username=self.username)
 
                 # jika salah
                 else:
@@ -247,7 +185,7 @@ class LoginPage(ctk.CTkFrame):
                     title='Error',
                     message='Akun tidak ditemukan!',
                     icon='warning'
-                )
+                    )
 
         # jika tidak diisi
         else:
@@ -273,80 +211,38 @@ class RegisterPage(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         
         # frame utama register
-        register_frame = ctk.CTkFrame(
-            self, 
-            width=380,
-            height=500,
-            corner_radius=12
-            )
-        register_frame.grid(
-            row=0,
-            column=0,
-            padx=(50, 50),
-            pady=(80, 10)
-            )
+        register_frame = ctk.CTkFrame(self, width=380, height=500, corner_radius=12)
+        register_frame.grid(row=0, column=0, padx=(50, 50), pady=(80, 10))
         register_frame.grid_propagate(False)
         register_frame.grid_columnconfigure(0, weight=1)
         
         # judul register
         title_label = ctk.CTkLabel(
-            register_frame,
-            text="Sign-Up",
+            register_frame,text="Sign-Up",
             font=ctk.CTkFont(size=26, weight='bold', family='Poppins')
-        )
+            )
         title_label.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            pady=(50, 20),
-            sticky='we'
-        )
+            row=0, column=0, columnspan=2,
+            pady=(50, 20), sticky='we'
+            )
         subtitle_label = ctk.CTkLabel(
             register_frame,
             text='Silahkan isi data untuk membuat akun',
-            font=ctk.CTkFont(
-                size=14,
-                family='Arial',
-                weight='normal'
+            font=ctk.CTkFont(size=14, family='Arial', weight='normal')
             )
-        )
-        subtitle_label.grid(
-            row=1,
-            column=0,
-            pady=(0, 60),
-            sticky='ew'
-        )
+        subtitle_label.grid(row=1,column=0,pady=(0, 60),sticky='ew')
 
         # frame input username
         username_frame = ctk.CTkFrame(register_frame, fg_color='transparent')
-        username_frame.grid(
-            row=2,
-            column=0,
-            columnspan=2,
-            pady=(0, 20)
-            )
+        username_frame.grid(row=2, column=0, columnspan=2, pady=(0, 20))
 
         # frame input password
-        password_frame = ctk.CTkFrame(
-            register_frame,
-            fg_color='transparent'
-            )
-        password_frame.grid(
-            row=3,
-            column=0, 
-            columnspan=2
-            )
+        password_frame = ctk.CTkFrame(register_frame, fg_color='transparent')
+        password_frame.grid(row=3, column=0, columnspan=2)
 
         # frame tombol
-        button_frame = ctk.CTkFrame(
-            register_frame,
-            fg_color='transparent'
-            )
-        button_frame.grid(
-            row=4,
-            column=0,
-            columnspan=2
-            )
+        button_frame = ctk.CTkFrame(register_frame, fg_color='transparent')
+        button_frame.grid(row=4, column=0, columnspan=2)
 
         # info username kosong
         self.username_info_label = ctk.CTkLabel(
@@ -354,13 +250,8 @@ class RegisterPage(ctk.CTkFrame):
             text='*username tidak boleh kosong',
             font=ctk.CTkFont(size=10, family='Calibri'),
             text_color='#FF0000'
-        )
-        self.username_info_label.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            sticky='w'
             )
+        self.username_info_label.grid(row=0, column=0, columnspan=2, sticky='w')
 
         # input username
         self.username_entry = ctk.CTkEntry(
@@ -369,7 +260,7 @@ class RegisterPage(ctk.CTkFrame):
             width=300, height=40,
             font=ctk.CTkFont(size=14, family='Poppins'),
             corner_radius=8
-        )
+            )
         self.username_entry.grid(row=0, column=0, columnspan=2)
         self.username_entry.bind('<FocusOut>', self.username_validate)
         self.username_entry.bind('<KeyRelease>', self.username_validate)
@@ -417,8 +308,7 @@ class RegisterPage(ctk.CTkFrame):
             placeholder_text='Masukkan ulang password',
             width=300, height=40,
             font=ctk.CTkFont(size=14, family='Poppins'),
-            show='•',
-            corner_radius=8
+            show='•', corner_radius=8
             )
         self.password_check.grid(row=2, column=0, columnspan=2)
         self.password_check.bind('<KeyRelease>', self.password_check_validate)
@@ -436,6 +326,7 @@ class RegisterPage(ctk.CTkFrame):
             command=self.show_password_check
             )
         self.password_check_hid.grid(row=3, column=0, pady=5, sticky='w')
+        
         # info konfirmasi password
         self.password_check_info_label = ctk.CTkLabel(
             password_frame,
@@ -448,11 +339,9 @@ class RegisterPage(ctk.CTkFrame):
         # tombol daftar
         self.button_register = ctk.CTkButton(
             button_frame,
-            text='Sign-Up',
-            width=300, height=40,
+            text='Sign-Up', width=300, height=40,
             font=ctk.CTkFont(size=16, family='Poppins'),
-            command=self.register_button,
-            corner_radius=10
+            command=self.register_button, corner_radius=10
             )
         self.button_register.grid(row=0, column=0, columnspan=2)
 
@@ -463,7 +352,7 @@ class RegisterPage(ctk.CTkFrame):
             text_color='#0D5BC0',
             font=ctk.CTkFont(size=10, family='Calibri', underline=True)
             )
-        self.login_link.grid(row=1,column=0,sticky='e')
+        self.login_link.grid(row=1, column=0, sticky='e')
         self.login_link.bind('<Button-1>', self.login_open)
         
     def username_validate(self, event=None):
@@ -482,12 +371,12 @@ class RegisterPage(ctk.CTkFrame):
             self.password_info_label.configure(
                 text='Password terlalu pendek',
                 text_color='#FF0000'
-            )
+                )
         else:
             self.password_info_label.configure(
                 text='Password sudah cukup',
                 text_color='#00FF00'
-            )
+                )
 
     def password_check_validate(self, event=None):
         # cek apakah password match dengan konfirmasi
@@ -498,12 +387,12 @@ class RegisterPage(ctk.CTkFrame):
             self.password_check_info_label.configure(
                 text='Password tidak sesuai',
                 text_color='#FF0000'
-            )
+                )
         else:
             self.password_check_info_label.configure(
                 text='Password sesuai',
                 text_color='#00FF00'
-            )
+                )
 
     def show_password(self):
         if self.hidden_var_1.get():
@@ -532,7 +421,7 @@ class RegisterPage(ctk.CTkFrame):
             self.password_check_info_label.configure(
                 text='Password tidak sesuai',
                 text_color='#FF0000'
-            )
+                )
             error = True
 
         # validasi username kosong
@@ -545,7 +434,7 @@ class RegisterPage(ctk.CTkFrame):
             self.password_info_label.configure(
                 text='Password terlalu pendek',
                 text_color='#FF0000'
-            )
+                )
             error = True
 
         # hentikan jika error ditemukan
@@ -569,7 +458,7 @@ class RegisterPage(ctk.CTkFrame):
                 title='Sukses',
                 message='Pendaftaran berhasil',
                 icon='check'
-            )
+                )
             self.username_entry.delete(0, tk.END)
             self.password_entry.delete(0, tk.END)
             self.password_check.delete(0, tk.END)
@@ -581,16 +470,78 @@ class RegisterPage(ctk.CTkFrame):
                 title='Error',
                 message='Username sudah terdaftar',
                 icon='warning'
-            )
+                )
             
     def login_open(self, event=None):
         # pindah ke halaman login
         self.controller.show_frame(LoginPage)
 
+
+# KELAS UTAMA APLIKASI
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        # set judul dan ukuran utama aplikasi
+        self.title('Guardian - Etalase Senjata')
+        self.geometry('1000x700')
+        self.iconbitmap('logo.ico')
+
+        # buat container untuk menampung halaman login & register
+        self.container = ctk.CTkFrame(self)
+        self.container.pack(fill='both', expand=True)
+
+        # konfigurasi grid container
+        self.container.grid_columnconfigure(0, weight=1)
+        self.container.grid_rowconfigure(0, weight=1)
+
+        # dictionary untuk menyimpan halaman
+        self.frames = {}
+        self.frame_list = [LoginPage, RegisterPage]
+        
+        # buat dan tampilkan semua halaman, tetapi hanya raise yang aktif
+        for F in self.frame_list:
+            frame = F(self.container, self)
+            self.frames[F] = frame
+            frame.grid(row=0, column=0, sticky='nsew')
+            
+        # tampilkan halaman login pertama kali
+        self.show_frame(LoginPage)
+
+    def show_frame(self, page):
+        # tampilkan halaman tertentu dengan tkraise
+        frame = self.frames[page]
+        frame.tkraise()
+
+    def open_homepage(self, username):
+        homepage = WeaponShowcaseApp(
+            parent=self.container,
+            controller=self,
+            username=username
+        )
+        homepage.grid(row=0, column=0, sticky='nsew')
+        homepage.tkraise()
+
+    def open_window_payment(self, caller, username, cart_items, cart_total, format_price_func, weapons_data):        
+        payment = PaymentWindow(
+            parent=self.container,
+            controller=self,
+            caller=caller,
+            username=username,
+            cart_items=cart_items,
+            cart_total=cart_total,
+            format_price_func=format_price_func,
+            weapons_data=weapons_data
+        )
+        payment.grid(row=0, column=0, sticky="nsew")
+        payment.tkraise()
+
+#kelas WeaponShowcaseApp
 class WeaponShowcaseApp(ctk.CTkFrame):
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller, username):
         super().__init__(parent)
         self.controller = controller
+        self.username = username
         self.weapons_data = all_data  # Ambil data dari variabel global
         self.cart_items = {} # { 'Nama Senjata': {'quantity': X, 'price_per_unit': Y, 'total_price': Z} }
         self.music_player = MusicPlayer() # Inisialisasi MusicPlayer
@@ -627,7 +578,7 @@ class WeaponShowcaseApp(ctk.CTkFrame):
                 resized_image = original_image.resize((40, 40), Image.Resampling.LANCZOS)
                 self.logo_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(40, 40))
                 
-                logo_label.configure(image=self.logo_image, text='Guardian', compound="left", padx=10)
+                logo_label.configure(image=self.logo_image, text="THE GUN ADDICTION ", compound="left", padx=10)
                 self.image_references.append(self.logo_image) # Simpan referensi
             except Exception as e:
                 print(f"Error loading logo: {e}")
@@ -638,8 +589,6 @@ class WeaponShowcaseApp(ctk.CTkFrame):
         self.music_state_var = ctk.StringVar(value="▶️ Musik")
         self.music_btn = ctk.CTkButton(top_frame, textvariable=self.music_state_var, command=self.toggle_music, fg_color="#C38D9E", width=100)
         self.music_btn.grid(row=0, column=1, padx=5, pady=10) # Position: Col 1
-
-        # --- TOP RIGHT: Search Bar and Filter ---
         
         # Search Bar (Kolom 3, kiri dari group kanan)
         self.search_var = ctk.StringVar()
@@ -846,7 +795,8 @@ class WeaponShowcaseApp(ctk.CTkFrame):
             
         # Panggil fungsi di App untuk membuka frame pembayaran
         self.controller.open_window_payment(
-            caller=self, 
+            caller=self,
+            username=self.username,
             cart_items=self.cart_items, 
             cart_total=sum(item['total_price'] for item in self.cart_items.values()), 
             format_price_func=self._format_price, # Melewatkan fungsi format harga
@@ -1034,10 +984,11 @@ class DetailWindow(ctk.CTkToplevel):
 # KELAS PAYMENTWINDOW (CHECKOUT FRAME)
 class PaymentWindow(ctk.CTkFrame):
     """Jendela/Frame Checkout yang menggantikan tampilan utama."""
-    def __init__(self, parent, caller, controller, cart_items, cart_total, format_price_func, weapons_data):
+    def __init__(self, parent, controller, caller, username, cart_items, cart_total, format_price_func, weapons_data):
         super().__init__(parent)
         self.controller = controller
         self.master_app = caller
+        self.username = username
         self.cart_items = cart_items
         self.initial_cart_total = cart_total
         # Fungsi format_price diambil dari WeaponShowcaseApp
@@ -1101,9 +1052,8 @@ class PaymentWindow(ctk.CTkFrame):
 
     def refresh_display(self):
         """Memuat ulang semua konten keranjang dan total harga."""
-        
-        # PERBAIKAN VITAL: Selalu ambil data keranjang terbaru dari aplikasi utama
-        self.cart_items = self.master_app.cart_items 
+
+        self.cart_items = self.master_app.cart_items
         
         # Kosongkan frame
         for widget in self.main_content_frame.winfo_children():
@@ -1222,6 +1172,20 @@ class PaymentWindow(ctk.CTkFrame):
             price_label = ctk.CTkLabel(item_data_frame, text=self.format_price(data['total_price']), text_color="#00FF7F", font=ctk.CTkFont(size=14, weight="bold"))
             price_label.grid(row=0, column=4, padx=10, sticky="e")
     
+
+
+    def create_payment_selection_section(self, parent_frame):
+        """Membuat bagian untuk memilih metode pembayaran."""
+        payment_label = ctk.CTkLabel(parent_frame, text="Pilih Cara Pembayaran:", font=ctk.CTkFont(size=18, weight="bold"))
+        payment_label.pack(anchor="w", padx=10, pady=(10, 5))
+
+        for category, methods in self.payment_methods.items():
+            category_label = ctk.CTkLabel(parent_frame, text=f"**{category}**", font=ctk.CTkFont(size=15, weight="bold"), text_color="#A8D0E6")
+            category_label.pack(anchor="w", padx=15, pady=(8, 3))
+            for method in methods:
+                method_rb = ctk.CTkRadioButton(parent_frame, text=method, variable=self.selected_payment_method, value=method, font=ctk.CTkFont(size=14))
+                method_rb.pack(anchor="w", padx=25, pady=3)
+
     def update_item_quantity(self, item_name, delta):
         """Memperbarui kuantitas item di keranjang utama dan memuat ulang tampilan."""
         # Mengambil data dari keranjang utama
@@ -1250,18 +1214,6 @@ class PaymentWindow(ctk.CTkFrame):
         self.master_app.update_cart_display() 
         self.refresh_display()
 
-    def create_payment_selection_section(self, parent_frame):
-        """Membuat bagian untuk memilih metode pembayaran."""
-        payment_label = ctk.CTkLabel(parent_frame, text="Pilih Cara Pembayaran:", font=ctk.CTkFont(size=18, weight="bold"))
-        payment_label.pack(anchor="w", padx=10, pady=(10, 5))
-
-        for category, methods in self.payment_methods.items():
-            category_label = ctk.CTkLabel(parent_frame, text=f"**{category}**", font=ctk.CTkFont(size=15, weight="bold"), text_color="#A8D0E6")
-            category_label.pack(anchor="w", padx=15, pady=(8, 3))
-            for method in methods:
-                method_rb = ctk.CTkRadioButton(parent_frame, text=method, variable=self.selected_payment_method, value=method, font=ctk.CTkFont(size=14))
-                method_rb.pack(anchor="w", padx=25, pady=3)
-
     def update_checkout_total(self):
         """Menghitung total hanya dari item yang terpilih (checked)."""
         self.cart_total = 0
@@ -1282,15 +1234,15 @@ class PaymentWindow(ctk.CTkFrame):
         # Contoh ID Transaksi acak
         transaction_id = datetime.now().strftime("%Y%m%d%H%M%S") 
         now = datetime.now().strftime("%d %B %Y %H:%M:%S")
-
         # --- HEADER ---
         receipt = "========================================\n"
         receipt += "       STRUK PEMBAYARAN - GUN ADDICTION\n"
         receipt += "========================================\n"
+        #memanggil nama user menggunakan username
+        receipt += f"nama pembeli: {self.username}\n"
         receipt += f"Tanggal/Waktu: {now}\n"
         receipt += f"ID Transaksi: #{transaction_id}\n"
         receipt += "----------------------------------------\n"
-        
         # --- DETAIL ITEM ---
         receipt += "ITEM YANG DIBELI:\n"
         subtotal_items = 0
@@ -1309,11 +1261,7 @@ class PaymentWindow(ctk.CTkFrame):
             # Format: Nama (Qty x @ Harga Satuan) = Subtotal
             receipt += f"{name}\n"
             receipt += f"   - Qty: {qty} x {price_unit_formatted} = {price_total_formatted}\n"
-            
         receipt += "----------------------------------------\n"
-
-        # --- RINGKASAN HARGA (Hypothetical Diskon) ---
-        
         # Logika Diskon sederhana (0% untuk contoh)
         DISCOUNT_RATE = 0.0 
         discount = int(subtotal_items * DISCOUNT_RATE)
@@ -1337,11 +1285,8 @@ class PaymentWindow(ctk.CTkFrame):
         receipt += "\n========================================\n"
         receipt += "          TERIMA KASIH ATAS KUNJUNGANNYA\n"
         receipt += "========================================\n"
-
         return receipt
     # --- AKHIR FUNGSI BARU ---
-
-
     def process_payment(self):
         selected_method = self.selected_payment_method.get()
         
@@ -1370,20 +1315,16 @@ class PaymentWindow(ctk.CTkFrame):
             self.cart_total, 
             selected_method
         )
-        # --- AKHIR PENGGANTIAN ---
-
 
         # 3. Tampilkan Pesan Sukses MENGGUNAKAN JENDELA KUSTOM
-        ReceiptWindow(self.master_app.controller, receipt_text) # Panggil jendela kustom yang baru
+        ReceiptWindow(self.master_app.controller, receipt_text)
         
         # 4. Update State
-        # Setelah sukses, reset keranjang utama hanya dengan item yang tidak di-checkout (items_to_keep)
         self.master_app.cart_items = items_to_keep
         self.master_app.update_cart_display()
         
         # Kembali ke etalase
-        self.controller.show_frame(WeaponShowcaseApp)
-        # self.destroy() # Hapus frame pembayaran
+        self.controller.open_homepage(username=self.username)
 
 # kelas struk
 class ReceiptWindow(ctk.CTkToplevel):
@@ -1530,120 +1471,6 @@ class MusicPlayer:
         self.current_music = self.music_files[self.current_index]
         return self.play()
     
-# KELAS MUSICPLAYER (UTILITAS)
-
-class MusicPlayer:
-    def __init__(self, music_dir="music_resource", supported_formats=None):
-        if supported_formats is None:
-            self.supported_formats = ['*.mp3', '*.ogg', '*.wav'] 
-        else:
-            self.supported_formats = supported_formats
-            
-        self.music_dir = os.path.join(os.getcwd(), music_dir)
-        self.music_files = []
-        self._load_default_files()
-        
-        self.current_index = 0
-        self.current_music = self.music_files[0] if self.music_files else None
-        self.is_playing = False
-        self.volume = 0.5 
-        
-        if self.current_music and pygame.mixer.get_init():
-            pygame.mixer.music.set_volume(self.volume)
-
-    def _load_default_files(self):
-        """Memuat file musik dari direktori default."""
-        if not os.path.exists(self.music_dir):
-            print(f"Direktori musik '{self.music_dir}' tidak ditemukan.")
-            return
-
-        self.music_files = []
-        for root, _, files in os.walk(self.music_dir):
-            for pattern in self.supported_formats:
-                for filename in fnmatch.filter(files, pattern):
-                    self.music_files.append(os.path.join(root, filename))
-        
-        if not self.music_files:
-            print("Tidak ada file musik default ditemukan.")
-
-    def add_music_file(self, file_path):
-        """Menambahkan file musik ke playlist"""
-        if file_path and os.path.exists(file_path):
-            if file_path not in self.music_files:
-                self.music_files.append(file_path)
-                if self.current_music is None:
-                    self.current_music = file_path
-                    self.current_index = len(self.music_files) - 1
-                return True
-        return False
-
-    def play(self):
-        """Memulai atau melanjutkan musik"""
-        if not pygame.mixer.get_init():
-            return None # Jangan jalankan jika mixer gagal
-            
-        if not self.music_files:
-            messagebox.showinfo("Info", "Tidak ada file musik. Silakan tambahkan file musik terlebih dahulu.")
-            return None
-        
-        if not self.is_playing:
-            try:
-                if self.current_music is None:
-                    self.current_music = self.music_files[0]
-                    self.current_index = 0
-
-                if not pygame.mixer.music.get_busy():
-                    pygame.mixer.music.load(self.current_music)
-                    pygame.mixer.music.set_volume(self.volume)
-                    pygame.mixer.music.play(-1) # -1 untuk loop tak terbatas
-                else:
-                    pygame.mixer.music.unpause()
-                
-                self.is_playing = True
-                return self.current_music
-            except Exception as e:
-                print(f"Error memutar musik: {e}")
-                messagebox.showerror("Error", f"Gagal memutar musik: {str(e)}")
-                return None
-        return self.current_music
-
-    def pause(self):
-        """Menjeda musik"""
-        if pygame.mixer.get_init() and self.is_playing:
-            pygame.mixer.music.pause()
-            self.is_playing = False
-
-    def stop(self):
-        """Menghentikan musik"""
-        if pygame.mixer.get_init():
-            pygame.mixer.music.stop()
-        self.is_playing = False
-        self.current_music = None
-
-    def set_volume(self, volume):
-        """Mengatur volume"""
-        self.volume = max(0.0, min(1.0, volume))
-        if pygame.mixer.get_init():
-            pygame.mixer.music.set_volume(self.volume)
-
-    def next_track(self):
-        """Pindah ke lagu berikutnya"""
-        if not self.music_files:
-            return None
-        self.stop()
-        self.current_index = (self.current_index + 1) % len(self.music_files)
-        self.current_music = self.music_files[self.current_index]
-        return self.play()
-
-    def previous_track(self):
-        """Pindah ke lagu sebelumnya"""
-        if not self.music_files:
-            return None
-        self.stop()
-        self.current_index = (self.current_index - 1 + len(self.music_files)) % len(self.music_files)
-        self.current_music = self.music_files[self.current_index]
-        return self.play()
-    
     # kelas chatbot
     # KELAS SHOPPING CHATBOT (TOPLEVEL WINDOW)
 class ShoppingChatBot(ctk.CTkToplevel):
@@ -1654,13 +1481,11 @@ class ShoppingChatBot(ctk.CTkToplevel):
         self.resizable(False, False)
         self.transient(master) # Jendela tetap di atas master
         self.master_app = master
-        
         self.colors = {
             "primary": "#41B3A3", "secondary": "#C38D9E", "accent": "#E8A87C", 
             "error": "#F76C6C", "dark_bg": "#1a1a1a", "light_bg": "#2d2d2d", 
             "text_light": "#ffffff", "text_dark": "#cccccc"
         }
-        
         # Mapping untuk Bot Response (Menggunakan data senjata yang dimuat)
         product_categories = {}
         for item in all_data:
@@ -1670,7 +1495,6 @@ class ShoppingChatBot(ctk.CTkToplevel):
                 product_categories[category] = {"items": [], "icon": "❓"}
             if name:
                 product_categories[category]["items"].append(name)
-        
         # Tambahkan ikon default jika Kategori tidak ada/kosong
         for cat in product_categories:
              if 'Pistol' in cat: product_categories[cat]['icon'] = '🛡️'
@@ -1678,9 +1502,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
              elif 'Shotgun' in cat: product_categories[cat]['icon'] = '💣'
              elif 'Serbu' in cat: product_categories[cat]['icon'] = '⚔️'
              elif 'Melee' in cat: product_categories[cat]['icon'] = '🔪'
-             
         self.categories = product_categories
-
         self.setup_ui()
         
     def setup_ui(self):
@@ -1741,8 +1563,6 @@ class ShoppingChatBot(ctk.CTkToplevel):
         qr_frame = ctk.CTkFrame(self, fg_color=self.colors["light_bg"], corner_radius=15)
         qr_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
         qr_frame.grid_columnconfigure(0, weight=1)
-
-
         quick_replies = [
             ("Kategori Produk", "kategori"), 
             ("Metode Pembayaran", "pembayaran"),
@@ -1750,16 +1570,12 @@ class ShoppingChatBot(ctk.CTkToplevel):
             ("Promo Bulan Ini", "promo"),
             ("Legalitas produk", "Legalitas")
         ]
-
-        
-        
         questions_container = ctk.CTkScrollableFrame(
             qr_frame, 
             fg_color="transparent",
             orientation="horizontal",
             height=60
         )
-
         questions_container.pack(fill="x", padx=10, pady=5)
         for i, (text, command) in enumerate(quick_replies):
             btn = ctk.CTkButton(
@@ -1774,8 +1590,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
                 corner_radius=15,
                 command=lambda cmd=command, txt=text: self.handle_quick_reply(cmd, txt)
             )
-            btn.grid(row=0, column=i, padx=5, pady=5, sticky="w")
-        
+            btn.grid(row=0, column=i, padx=5, pady=5, sticky="w") 
         self.chat_entry.focus()
         self.show_welcome_message()
 
@@ -1948,8 +1763,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
             🚚 **GRATIS ONGKIR** min. belanja 
                 Rp 5.000.000
             💳 **CASHBACK 15%** menggunakan e-wallet
-            🎁 **BUNDLE SPECIAL** 
-                senjata + aksesoris
+            🎁 **BUNDLE SPECIAL** senjata + aksesoris
             ⏰ **Promo berlaku hingga akhir bulan!**
             📞 *Hubungi CS untuk klaim promo*"""
 
@@ -1960,8 +1774,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
                  1-2 hari kerja
             📍 **Pulau Jawa:** 2-3 hari kerja
             📍 **Luar Jawa:** 3-7 hari kerja
-            📍 **Same-day delivery** 
-                (area tertentu)
+            📍 **Same-day delivery** (area tertentu)
             🔒 **Packaging aman dan discreet**"""
 
     def get_default_response(self):
@@ -1972,6 +1785,7 @@ class ShoppingChatBot(ctk.CTkToplevel):
             Coba ketik salah satu: **kategori**,
             **pembayaran**, **promo**, 
             **legalitas**, atau **pengiriman**.""" 
-            
-app = App()
-app.mainloop()
+    
+if __name__ == '__main__':
+    app = App()
+    app.mainloop()
