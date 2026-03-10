@@ -1,7 +1,10 @@
 import customtkinter as ctk
-from PIL import Image
 import os 
 import tkinter as tk
+import pygame
+import fnmatch
+from CTkMessagebox import CTkMessagebox
+from PIL import Image
 from tkinter import messagebox 
 from datetime import datetime
 from open_excel import all_data
@@ -10,1115 +13,874 @@ from open_excel import all_data
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-# KELAS CHATBOT
+class WeaponShowcaseApp(ctk.CTkFrame):
+    def __init__(self, parent, controller, username):
+        super().__init__(parent)
+        self.controller = controller
+        self.username = username
+        self.weapons_data = all_data  # Ambil data dari variabel global
+        self.cart_items = {} # { 'Nama Senjata': {'quantity': X, 'price_per_unit': Y, 'total_price': Z} }
+        self.music_player = MusicPlayer() # Inisialisasi MusicPlayer
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.image_references = [] # Untuk mencegah garbage collection gambar
+
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.create_widgets()
+        self.load_showcase_items()
+
+    def create_widgets(self):
+        # Frame Kontrol Atas
+        top_frame = ctk.CTkFrame(self, fg_color="gray10", height=60)
+        top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        
+        # New Grid Configuration for Top Frame (Logo/Title | Filler | Music | Search | Filter)
+        top_frame.grid_columnconfigure(0, weight=0) # Logo & Title
+        top_frame.grid_columnconfigure(1, weight=0) # Music Player
+        top_frame.grid_columnconfigure(2, weight=1) # Filler Space
+        top_frame.grid_columnconfigure(3, weight=0) # Search
+        top_frame.grid_columnconfigure(4, weight=0) # Filter
+        
+        # --- TOP LEFT: Logo and Title ---
+        logo_path = os.path.join(self.base_dir, 'logo.png')
+        self.logo_image = None
+        logo_label = ctk.CTkLabel(top_frame, text="THE GUN ADDICTION ", font=ctk.CTkFont(size=20, weight="bold"))
+
+        if os.path.exists(logo_path):
+            try:
+                original_image = Image.open(logo_path)
+                # Resize logo ke ukuran yang pas
+                resized_image = original_image.resize((40, 40), Image.Resampling.LANCZOS)
+                self.logo_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(40, 40))
+                
+                logo_label.configure(image=self.logo_image, text="THE GUN ADDICTION ", compound="left", padx=10)
+                self.image_references.append(self.logo_image) # Simpan referensi
+            except Exception as e:
+                print(f"Error loading logo: {e}")
+
+        logo_label.grid(row=0, column=0, sticky="w", padx=10)
+        
+        # Tombol Music Player (Pindahkan ke dekat logo, Kolom 1)
+        self.music_state_var = ctk.StringVar(value="▶️ Musik")
+        self.music_btn = ctk.CTkButton(top_frame, textvariable=self.music_state_var, command=self.toggle_music, fg_color="#C38D9E", width=100)
+        self.music_btn.grid(row=0, column=1, padx=5, pady=10) # Position: Col 1
+        
+        # Search Bar (Kolom 3, kiri dari group kanan)
+        self.search_var = ctk.StringVar()
+        search_entry = ctk.CTkEntry(top_frame, textvariable=self.search_var, placeholder_text="Cari senjata...", width=200)
+        search_entry.grid(row=0, column=3, padx=(10, 5), pady=10, sticky="e")
+        self.search_var.trace_add("write", self.filter_showcase)
+
+        # Filter Kategori (Kolom 4, paling kanan)
+        categories = ['Semua'] + sorted(list(set(item.get('Kategori', 'Lainnya') for item in self.weapons_data)))
+        self.category_var = ctk.StringVar(value=categories[0])
+        category_option = ctk.CTkOptionMenu(top_frame, values=categories, command=self.filter_showcase, variable=self.category_var)
+        category_option.grid(row=0, column=4, padx=(5, 10), pady=10, sticky="e")
+
+
+        # Frame Showcase (Scrollable)
+        self.showcase_frame = ctk.CTkScrollableFrame(self, fg_color="gray15", label_text="Daftar Produk")
+        self.showcase_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.showcase_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        
+        # Frame Keranjang Bawah (Footer)
+        self.cart_frame = ctk.CTkFrame(self, fg_color="gray10", height=60)
+        self.cart_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
+        
+        # New Grid Configuration for Bottom Frame (Cart Total Items | Filler | Chatbot | Checkout)
+        self.cart_frame.grid_columnconfigure(0, weight=1) # Cart Total Labels
+        self.cart_frame.grid_columnconfigure(1, weight=0) # Chatbot Button
+        self.cart_frame.grid_columnconfigure(2, weight=0) # Checkout Button
+
+        # Label Total Unit Keranjang (Hanya Jumlah Unit)
+        self.cart_total_label = ctk.CTkLabel(self.cart_frame, text="UNIT (0 item)", font=ctk.CTkFont(size=16, weight="bold"))
+        self.cart_total_label.grid(row=0, column=0, sticky="w", padx=10)
+        
+        # Tombol Bantuan/Chatbot
+        chatbot_btn = ctk.CTkButton(self.cart_frame, text="💬 GunBot", command=self.open_chatbot, fg_color="#41B3A3")
+        chatbot_btn.grid(row=0, column=1, padx=10, pady=10, sticky="e")
+
+        # Tombol Checkout
+        checkout_button = ctk.CTkButton(self.cart_frame, text="🛒 Pembayaran", command=self.open_payment_window, fg_color="#00FF7F", hover_color="#00B359", text_color="#000000")
+        checkout_button.grid(row=0, column=2, sticky="e", padx=10, pady=10)
+
+    def _parse_price(self, price_str):
+        """Mengubah string harga (misal 'Rp 10.000.000' atau 10000000) menjadi integer."""
+        if isinstance(price_str, (int, float)):
+            return int(price_str)
+        
+        price_str = str(price_str).strip()
+        try:
+            # Hapus 'Rp', spasi, dan semua pemisah ribuan (titik/komma)
+            clean_str = price_str.lower().replace("rp", "").replace(" ", "").replace(".", "").replace(",", "")
+            return int(clean_str)
+        except:
+            return 0
+            
+    def _format_price(self, price_int):
+        """Format integer menjadi format Rupiah (Rp 1.000.000)."""
+        # Mengubah integer menjadi format Rupiah Indonesia 
+        # Gunakan format {:,} untuk ribuan, lalu ganti separator
+        return f"Rp {price_int:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
+        
+
+    def open_chatbot(self):
+        """Membuka jendela ChatBot."""
+        # Pastikan hanya satu instance ChatBot yang terbuka
+        if not hasattr(self, 'chatbot_window') or not self.chatbot_window.winfo_exists():
+            self.chatbot_window = ShoppingChatBot(self)
+        self.chatbot_window.focus_set()
+
+    def toggle_music(self):
+        """Memutar atau menjeda musik latar."""
+        if self.music_player.is_playing:
+            self.music_player.pause()
+            self.music_state_var.set("▶️ Musik")
+        else:
+            current_track = self.music_player.play()
+            if current_track:
+                self.music_state_var.set("⏸️ Jeda")
+    
+    def load_showcase_items(self):
+        """Memuat item senjata ke dalam showcase frame."""
+        self.filter_showcase()
+        
+    def filter_showcase(self, *args):
+        """Memfilter dan memuat ulang item di showcase."""
+        # 1. Kosongkan showcase
+        for widget in self.showcase_frame.winfo_children():
+            widget.destroy()
+        # Perhatian: Jangan clear self.image_references jika logo ada di sana.
+        # Clear hanya referensi gambar kartu produk jika perlu, atau pastikan logo tidak ikut ter-destroy.
+        
+        search_query = self.search_var.get().lower()
+        selected_category = self.category_var.get()
+
+        # 2. Filter data
+        filtered_data = []
+        for item in self.weapons_data:
+            name = item.get('Nama Senjata', '').lower()
+            category = item.get('Kategori', 'Lainnya')
+            
+            name_match = search_query in name
+            category_match = (selected_category == 'Semua' or category == selected_category)
+            
+            if name_match and category_match:
+                filtered_data.append(item)
+
+        # 3. Tampilkan data yang terfilter
+        col = 0
+        row = 0
+        
+        if not filtered_data:
+            ctk.CTkLabel(self.showcase_frame, text="Produk tidak ditemukan.", font=ctk.CTkFont(size=16)).grid(row=0, column=0, columnspan=4, pady=50)
+
+        for item in filtered_data:
+            self.create_weapon_card(self.showcase_frame, item, row, col)
+            col += 1
+            if col > 3:
+                col = 0
+                row += 1
+
+    def create_weapon_card(self, parent_frame, weapon_data, row, col):
+        """Membuat satu kartu produk senjata."""
+        card = ctk.CTkFrame(parent_frame, corner_radius=10, fg_color="gray25")
+        card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+        card.grid_columnconfigure(0, weight=1)
+        
+        name = weapon_data.get('Nama Senjata', 'N/A')
+        
+        # Pastikan harga di-parse ke integer
+        raw_price = self._parse_price(weapon_data.get('Harga', 0))
+        formatted_price = self._format_price(raw_price)
+        
+        image_filename = weapon_data.get('Gambar', '')
+
+        # Gambar Produk
+        image_path = os.path.join(self.base_dir, 'picture_resource', image_filename)
+        
+        image_label = ctk.CTkLabel(card, text="[No Image]", font=ctk.CTkFont(size=12))
+        image_label.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+
+        if os.path.exists(image_path):
+            try:
+                original_image = Image.open(image_path)
+                # Resize gambar (Contoh: 150x80)
+                resized_image = original_image.resize((150, 80), Image.Resampling.LANCZOS)
+                weapon_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(150, 80))
+                image_label.configure(image=weapon_image, text="")
+                self.image_references.append(weapon_image)
+            except Exception as e:
+                image_label.configure(text="[Gagal Muat Gambar]")
+
+        # Nama
+        name_label = ctk.CTkLabel(card, text=name, font=ctk.CTkFont(size=14, weight="bold"), wraplength=180)
+        name_label.grid(row=1, column=0, padx=10, pady=(5, 2), sticky="w")
+        
+        # Harga
+        price_label = ctk.CTkLabel(card, text=formatted_price, font=ctk.CTkFont(size=16, weight="bold"), text_color="#00FF7F")
+        price_label.grid(row=2, column=0, padx=10, pady=(2, 5), sticky="w")
+        
+        # Tombol Detail & Beli
+        button_frame = ctk.CTkFrame(card, fg_color="transparent")
+        button_frame.grid(row=3, column=0, padx=10, pady=(5, 10), sticky="ew")
+        button_frame.grid_columnconfigure(0, weight=1)
+        button_frame.grid_columnconfigure(1, weight=1)
+        
+        detail_btn = ctk.CTkButton(button_frame, text="🔍 Detail", command=lambda data=weapon_data: self.open_detail_window(data), fg_color="gray40")
+        detail_btn.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        
+        # Gunakan raw_price (integer) saat memanggil add_to_cart
+        buy_btn = ctk.CTkButton(button_frame, text="➕ Beli", command=lambda n=name, p=raw_price: self.add_to_cart(n, p, 1), fg_color="#E8A87C", hover_color="#D1976F", text_color="#000000")
+        buy_btn.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+    def open_detail_window(self, weapon_data):
+        """Membuka jendela detail produk."""
+        # Melewatkan fungsi format harga ke DetailWindow
+        detail_window = DetailWindow(self, weapon_data, self._format_price)
+        detail_window.focus_set()
+
+    def add_to_cart(self, name, price_per_unit, quantity):
+        """Menambahkan item ke keranjang belanja."""
+        if name in self.cart_items:
+            # Update kuantitas dan total
+            self.cart_items[name]['quantity'] += quantity
+            self.cart_items[name]['total_price'] += (price_per_unit * quantity)
+        else:
+            # Tambahkan item baru
+            self.cart_items[name] = {
+                'quantity': quantity,
+                'price_per_unit': price_per_unit,
+                'total_price': price_per_unit * quantity
+            }
+        self.update_cart_display()
+
+    def update_cart_display(self):
+        """Memperbarui label total item count keranjang (Hanya total item)."""
+        total_items = sum(item['quantity'] for item in self.cart_items.values())
+        
+        # MODIFIKASI: HANYA TAMPILKAN JUMLAH ITEM
+        self.cart_total_label.configure(text=f"Keranjang ({total_items} item)")
+
+    def open_payment_window(self):
+        """Membuka jendela pembayaran (PaymentWindow)."""
+        if not self.cart_items:
+            CTkMessagebox(title="Info", message="Keranjang masih kosong. Tambahkan item terlebih dahulu.", icon="info")
+            return
+            
+        # Panggil fungsi di App untuk membuka frame pembayaran
+        self.controller.open_window_payment(
+            caller=self,
+            username=self.username,
+            cart_items=self.cart_items, 
+            cart_total=sum(item['total_price'] for item in self.cart_items.values()), 
+            format_price_func=self._format_price, # Melewatkan fungsi format harga
+            weapons_data=self.weapons_data
+        )
+
+# KELAS DETAIL PRODUK (TOPLEVEL WINDOW)
+class DetailWindow(ctk.CTkToplevel):
+    def __init__(self, master, weapon_data, format_price_func):
+        super().__init__(master)
+        self.title(f"Detail Produk: {weapon_data['Nama Senjata']}")
+        self.geometry("700x550")
+        self.resizable(False, False)
+        self.transient(master) # Jendela tetap di atas master
+
+        self.weapon = weapon_data
+        self.format_price = format_price_func
+        self.master_app = master
+        
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.image_references = None # Untuk mencegah garbage collection
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Header (Nama dan Harga)
+        header_frame = ctk.CTkFrame(self, fg_color="gray15")
+        header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
+        header_frame.grid_columnconfigure(1, weight=1)
+
+        # Nama Senjata
+        name_label = ctk.CTkLabel(
+            header_frame, 
+            text=self.weapon['Nama Senjata'], 
+            font=ctk.CTkFont(size=24, weight="bold")
+        )
+        name_label.grid(row=0, column=0, sticky="w", padx=10, pady=5)
+
+        # Harga
+        # Ambil harga yang sudah dipastikan integer dari WeaponShowcaseApp
+        raw_price = self.master_app._parse_price(self.weapon['Harga'])
+        
+        price_label = ctk.CTkLabel(
+            header_frame, 
+            text=self.format_price(raw_price), 
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#00FF7F" # Hijau terang
+        )
+        price_label.grid(row=0, column=1, sticky="e", padx=10, pady=5)
+
+        # Main Content Frame (Gambar & Deskripsi)
+        main_frame = ctk.CTkFrame(self, fg_color="gray20")
+        main_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 10))
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=1)
+        main_frame.grid_rowconfigure(0, weight=1)
+
+        # Bagian Kiri: Gambar
+        image_frame = ctk.CTkFrame(main_frame, fg_color="gray15")
+        image_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        image_frame.grid_rowconfigure(0, weight=1)
+        image_frame.grid_columnconfigure(0, weight=1)
+
+        image_path = os.path.join(self.base_dir, 'picture_resource', self.weapon.get('Gambar', ''))
+        
+        image_label = ctk.CTkLabel(image_frame, text="[Gambar Tidak Tersedia]", font=ctk.CTkFont(size=14))
+        image_label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        if os.path.exists(image_path):
+            try:
+                original_image = Image.open(image_path)
+                # Resize gambar agar pas di frame 
+                width, height = original_image.size
+                ratio = min(350 / width, 300 / height)
+                new_size = (int(width * ratio), int(height * ratio))
+                
+                resized_image = original_image.resize(new_size, Image.Resampling.LANCZOS)
+                weapon_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=new_size)
+                
+                image_label.configure(image=weapon_image, text="")
+                self.image_references = weapon_image # Simpan referensi
+            except Exception as e:
+                print(f"Error memuat gambar: {e}")
+                image_label.configure(text="[Gagal Memuat Gambar]")
+
+        # Bagian Kanan: Deskripsi
+        desc_frame = ctk.CTkFrame(main_frame, fg_color="gray15")
+        desc_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        desc_frame.grid_columnconfigure(0, weight=1)
+        desc_frame.grid_rowconfigure(1, weight=1)
+
+        desc_title = ctk.CTkLabel(desc_frame, text="Deskripsi Produk", font=ctk.CTkFont(size=18, weight="bold"))
+        desc_title.grid(row=0, column=0, sticky="nw", padx=10, pady=(10, 5))
+
+        # Gunakan CTkTextbox untuk deskripsi panjang
+        description_text = self.weapon.get('Deskripsi', 'Deskripsi tidak tersedia.')
+        
+        desc_box = ctk.CTkTextbox(
+            desc_frame, 
+            wrap="word", 
+            activate_scrollbars=True,
+            font=("Arial", 14),
+            fg_color="gray15",
+            border_width=0
+        )
+        desc_box.insert("0.0", description_text)
+        desc_box.configure(state="disabled") # Jadikan read-only
+        desc_box.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        # Footer (Tombol)
+        footer_frame = ctk.CTkFrame(self, fg_color="transparent")
+        footer_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 20))
+        footer_frame.grid_columnconfigure(0, weight=1)
+        footer_frame.grid_columnconfigure(1, weight=1)
+
+        # Input Kuantitas
+        qty_label = ctk.CTkLabel(footer_frame, text="Kuantitas:", font=ctk.CTkFont(size=14))
+        qty_label.grid(row=0, column=0, sticky="w", padx=(10, 5))
+        
+        self.qty_var = tk.StringVar(value="1")
+        self.qty_entry = ctk.CTkEntry(
+            footer_frame, 
+            width=50, 
+            textvariable=self.qty_var,
+            font=ctk.CTkFont(size=14)
+        )
+        self.qty_entry.grid(row=0, column=0, sticky="w", padx=(80, 0))
+        self.qty_entry.bind("<KeyRelease>", self.validate_quantity)
+
+        # Tombol Tambah ke Keranjang
+        add_to_cart_btn = ctk.CTkButton(
+            footer_frame, 
+            text="➕ Tambah ke Keranjang", 
+            command=self.add_to_cart,
+            fg_color="#E8A87C", 
+            hover_color="#D1976F",
+            text_color="#000000"
+        )
+        add_to_cart_btn.grid(row=0, column=1, sticky="e", padx=10)
+
+    def validate_quantity(self, event=None):
+        """Memastikan input kuantitas adalah angka positif."""
+        try:
+            qty = int(self.qty_var.get())
+            if qty < 1:
+                self.qty_var.set("1")
+        except ValueError:
+            # Hapus karakter non-angka atau set ke 1 jika input kosong
+            current_text = self.qty_var.get()
+            clean_text = ''.join(filter(str.isdigit, current_text))
+            if not clean_text or int(clean_text) == 0:
+                self.qty_var.set("1")
+            else:
+                self.qty_var.set(clean_text)
+                
+    def add_to_cart(self):
+        """Menambahkan item ke keranjang belanja di aplikasi utama."""
+        try:
+            quantity = int(self.qty_var.get())
+        except ValueError:
+            CTkMessagebox(title="Error", message="Kuantitas harus berupa angka valid.", icon="warning")
+            return
+
+        if quantity < 1:
+            CTkMessagebox(title="Error", message="Kuantitas minimal 1.", icon="warning")
+            return
+            
+        weapon_name = self.weapon['Nama Senjata']
+        
+        # Pastikan harga yang masuk ke keranjang adalah integer yang sudah di-parse
+        unit_price = self.master_app._parse_price(self.weapon['Harga'])
+
+        self.master_app.add_to_cart(weapon_name, unit_price, quantity)
+        
+        CTkMessagebox(
+            title="Sukses!",
+            message=f"{quantity}x {weapon_name} berhasil ditambahkan ke keranjang!",
+            icon="check"
+        )
+        self.destroy() # Tutup jendela detail setelah menambah ke keranjang
+
+# KELAS MUSICPLAYER (UTILITAS)
+class MusicPlayer:
+    def __init__(self, music_dir="music_resource", supported_formats=None):
+        if supported_formats is None:
+            self.supported_formats = ['*.mp3', '*.ogg', '*.wav'] 
+        else:
+            self.supported_formats = supported_formats
+            
+        self.music_dir = os.path.join(os.getcwd(), music_dir)
+        self.music_files = []
+        self._load_default_files()
+        
+        self.current_index = 0
+        self.current_music = self.music_files[0] if self.music_files else None
+        self.is_playing = False
+        self.volume = 0.5 
+        
+        if self.current_music and pygame.mixer.get_init():
+            pygame.mixer.music.set_volume(self.volume)
+
+    def _load_default_files(self):
+        """Memuat file musik dari direktori default."""
+        if not os.path.exists(self.music_dir):
+            print(f"Direktori musik '{self.music_dir}' tidak ditemukan.")
+            return
+
+        self.music_files = []
+        for root, _, files in os.walk(self.music_dir):
+            for pattern in self.supported_formats:
+                for filename in fnmatch.filter(files, pattern):
+                    self.music_files.append(os.path.join(root, filename))
+        
+        if not self.music_files:
+            print("Tidak ada file musik default ditemukan.")
+
+    def add_music_file(self, file_path):
+        """Menambahkan file musik ke playlist"""
+        if file_path and os.path.exists(file_path):
+            if file_path not in self.music_files:
+                self.music_files.append(file_path)
+                if self.current_music is None:
+                    self.current_music = file_path
+                    self.current_index = len(self.music_files) - 1
+                return True
+        return False
+
+    def play(self):
+        """Memulai atau melanjutkan musik"""
+        if not pygame.mixer.get_init():
+            return None # Jangan jalankan jika mixer gagal
+            
+        if not self.music_files:
+            messagebox.showinfo("Info", "Tidak ada file musik. Silakan tambahkan file musik terlebih dahulu.")
+            return None
+        
+        if not self.is_playing:
+            try:
+                if self.current_music is None:
+                    self.current_music = self.music_files[0]
+                    self.current_index = 0
+
+                if not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.load(self.current_music)
+                    pygame.mixer.music.set_volume(self.volume)
+                    pygame.mixer.music.play(-1) # -1 untuk loop tak terbatas
+                else:
+                    pygame.mixer.music.unpause()
+                
+                self.is_playing = True
+                return self.current_music
+            except Exception as e:
+                print(f"Error memutar musik: {e}")
+                messagebox.showerror("Error", f"Gagal memutar musik: {str(e)}")
+                return None
+        return self.current_music
+
+    def pause(self):
+        """Menjeda musik"""
+        if pygame.mixer.get_init() and self.is_playing:
+            pygame.mixer.music.pause()
+            self.is_playing = False
+
+    def stop(self):
+        """Menghentikan musik"""
+        if pygame.mixer.get_init():
+            pygame.mixer.music.stop()
+        self.is_playing = False
+        self.current_music = None
+
+    def set_volume(self, volume):
+        """Mengatur volume"""
+        self.volume = max(0.0, min(1.0, volume))
+        if pygame.mixer.get_init():
+            pygame.mixer.music.set_volume(self.volume)
+
+    def next_track(self):
+        """Pindah ke lagu berikutnya"""
+        if not self.music_files:
+            return None
+        self.stop()
+        self.current_index = (self.current_index + 1) % len(self.music_files)
+        self.current_music = self.music_files[self.current_index]
+        return self.play()
+
+    def previous_track(self):
+        """Pindah ke lagu sebelumnya"""
+        if not self.music_files:
+            return None
+        self.stop()
+        self.current_index = (self.current_index - 1 + len(self.music_files)) % len(self.music_files)
+        self.current_music = self.music_files[self.current_index]
+        return self.play()
+    
+    # kelas chatbot
+    # KELAS SHOPPING CHATBOT (TOPLEVEL WINDOW)
 class ShoppingChatBot(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
-        
+        self.title("GunBot - Layanan Pelanggan")
+        self.geometry("400x500")
+        self.resizable(False, False)
+        self.transient(master) # Jendela tetap di atas master
         self.master_app = master
-        self.title("Chat Layanan Pelanggan 💬")
-        self.geometry("500x500") 
-        self.resizable(True, True)
-        self.grab_set() 
-        self.protocol("WM_DELETE_WINDOW", self.on_close) 
-
-        # DATA PRODUK (Untuk keperluan Bot)
-        self.products = {
-            "Senjata laras panjang": {
-                "items": ["Sniper Alpha", "Precision X9", "Long Range Elite"],
-                "icon": "🎯"
-            },
-            "Senjata defender": {
-                "items": ["Taktis X-15", "Defender P900", "Taurus Judge Defender", "Shotgun Defender S12"],
-                "icon": "🛡️"
-            },
-            "Senjata serbu": {
-                "items": ["Serbu AR-2030", "Assault Pro", "Combat X7"],
-                "icon": "⚔️"
-            },
-            "Senjata melee": {
-                "items": ["Karambit Shadow", "Golok Pranjurit", "Combat Knife Pro"],
-                "icon": "🔪"
-            },
-            "Granat & Bom": {
-                "items": ["Granat Asap M18", "Flashbang X2", "Tactical Grenade"],
-                "icon": "💣"
-            },
-            "Aksesoris": {
-                "items": ["Red Dot Sight", "Tactical Grip", "Extended Magazine", "Silencer Pro"],
-                "icon": "🔧"
-            }
-        }
-        
-        self.prices = {
-            "Sniper Alpha": "Rp 25.000.000",
-            "Precision X9": "Rp 28.500.000",
-            "Long Range Elite": "Rp 32.000.000",
-            "Pistol Taktis X-15": "Rp 5.500.000", # Harga diperbarui sesuai etalase
-            "Pistol Defender P900": "Rp 4.200.000", # Harga diperbarui sesuai etalase
-            "pistol taurus judge defender": "Rp 6.500.000", # Harga diperbarui sesuai etalase
-            "Shotgun Defender S12": "Rp 7.800.000",
-            "Senapan Serbu AR-2030": "Rp 18.000.000",
-            "Assault Pro": "Rp 21.000.000",
-            "Combat X7": "Rp 19.500.000",
-            "Pisau Karambit Shadow": "Rp 1.200.000", # Harga diperbarui sesuai etalase
-            "Golok Prajurit": "Rp 900.000", # Harga diperbarui sesuai etalase
-            "Combat Knife Pro": "Rp 1.500.000",
-            "Granat Asap M18": "Rp 750.000",
-            "Flashbang X2": "Rp 850.000",
-            "Tactical Grenade": "Rp 950.000"
-        }
-        
-        self.quick_questions = [
-            "Kategori senjata apa saja?",
-            "Tampilkan semua produk!",
-            "Harga senjata laras panjang?",
-            "Cara pembayaran?",
-            "Ada promo saat ini?",
-            "Waktu pengiriman?",
-            "Bantu saya memilih",
-            "Produk legal & berkualitas?"
-        ]
-        
         self.colors = {
-            "primary": "#2E86AB",
-            "secondary": "#A8D0E6",
-            "accent": "#F76C6C",
-            "dark_bg": "#1a1a1a",
-            "light_bg": "#2d2d2d",
-            "text_light": "#ffffff",
-            "text_dark": "#cccccc"
+            "primary": "#41B3A3", "secondary": "#C38D9E", "accent": "#E8A87C", 
+            "error": "#F76C6C", "dark_bg": "#1a1a1a", "light_bg": "#2d2d2d", 
+            "text_light": "#ffffff", "text_dark": "#cccccc"
         }
-        
+        # Mapping untuk Bot Response (Menggunakan data senjata yang dimuat)
+        product_categories = {}
+        for item in all_data:
+            category = item.get('Kategori', 'Lainnya') # Asumsi ada kolom Kategori di Excel
+            name = item.get('Nama Senjata')
+            if category not in product_categories:
+                product_categories[category] = {"items": [], "icon": "❓"}
+            if name:
+                product_categories[category]["items"].append(name)
+        # Tambahkan ikon default jika Kategori tidak ada/kosong
+        for cat in product_categories:
+             if 'Pistol' in cat: product_categories[cat]['icon'] = '🛡️'
+             elif 'Sniper' in cat: product_categories[cat]['icon'] = '🎯'
+             elif 'Shotgun' in cat: product_categories[cat]['icon'] = '💣'
+             elif 'Serbu' in cat: product_categories[cat]['icon'] = '⚔️'
+             elif 'Melee' in cat: product_categories[cat]['icon'] = '🔪'
+        self.categories = product_categories
         self.setup_ui()
-    
+        
     def setup_ui(self):
         self.configure(fg_color=self.colors["dark_bg"])
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
+        # Header
         header_frame = ctk.CTkFrame(self, height=70, fg_color=self.colors["primary"], corner_radius=0)
         header_frame.grid(row=0, column=0, sticky="ew")
         header_frame.pack_propagate(False)
-        
-        title_label = ctk.CTkLabel(header_frame, 
-            text="💬 Layanan Pelanggan GUNBOT",
-            font=("Arial", 18, "bold"),
-            text_color="white")
+        title_label = ctk.CTkLabel(header_frame, text="💬 Layanan Pelanggan GUNBOT", font=("Arial", 18, "bold"), text_color="white")
         title_label.pack(expand=True)
-        
+
+        # Chat Display
         self.chat_display_frame = ctk.CTkScrollableFrame(
             self, 
-            fg_color=self.colors["dark_bg"],
-            border_width=0,
-            scrollbar_button_color=self.colors["primary"],
-            scrollbar_button_hover_color=self.colors["secondary"]
+            fg_color=self.colors["dark_bg"], 
+            border_width=0, 
+            scrollbar_button_color=self.colors["primary"], 
+            scrollbar_button_hover_color=self.colors["accent"]
         )
-        self.chat_display_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(10, 5))
+        self.chat_display_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         self.chat_display_frame.grid_columnconfigure(0, weight=1)
+        self.chat_row_counter = 0
+
+        # Input Area
+        input_frame = ctk.CTkFrame(self, fg_color=self.colors["light_bg"])
+        input_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+        input_frame.grid_columnconfigure(0, weight=1)
         
-        questions_frame = ctk.CTkFrame(self, fg_color=self.colors["light_bg"], corner_radius=15)
-        questions_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        self.chat_entry = ctk.CTkEntry(
+            input_frame, 
+            placeholder_text="Ketik pesan Anda...",
+            font=("Arial", 14), 
+            height=45, 
+            fg_color=self.colors["dark_bg"], 
+            text_color=self.colors["text_light"],
+            corner_radius=20
+        )
+        self.chat_entry.grid(row=0, column=0, sticky="ew", padx=(10, 5), pady=10)
+        self.chat_entry.bind("<Return>", self.send_message_event)
         
+        send_button = ctk.CTkButton(
+            input_frame, 
+            text="Kirim 🚀", 
+            font=("Arial", 12, "bold"), 
+            height=45, 
+            width=100, 
+            fg_color=self.colors["accent"], 
+            hover_color="#ff5252", 
+            text_color="white", 
+            corner_radius=20, 
+            command=self.send_message
+        )
+        send_button.grid(row=0, column=1, sticky="e", padx=(0, 10), pady=10)
+
+        qr_frame = ctk.CTkFrame(self, fg_color=self.colors["light_bg"], corner_radius=15)
+        qr_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        qr_frame.grid_columnconfigure(0, weight=1)
+        quick_replies = [
+            ("Kategori Produk", "kategori"), 
+            ("Metode Pembayaran", "pembayaran"),
+            ("Info Pengiriman", "pengiriman"),
+            ("Promo Bulan Ini", "promo"),
+            ("Legalitas produk", "Legalitas")
+        ]
         questions_container = ctk.CTkScrollableFrame(
-            questions_frame, 
+            qr_frame, 
             fg_color="transparent",
             orientation="horizontal",
             height=60
         )
         questions_container.pack(fill="x", padx=10, pady=5)
-        
-        for question in self.quick_questions:
+        for i, (text, command) in enumerate(quick_replies):
             btn = ctk.CTkButton(
                 questions_container,
-                text=question,
+                text=text,
                 font=("Arial", 11),
                 height=35,
+                width=140,
                 fg_color=self.colors["primary"],
                 hover_color=self.colors["secondary"],
                 text_color="white",
-                corner_radius=20,
-                command=lambda q=question: self.send_quick_question(q)
+                corner_radius=15,
+                command=lambda cmd=command, txt=text: self.handle_quick_reply(cmd, txt)
             )
-            btn.pack(side="left", padx=3, pady=5)
-        
-        input_frame = ctk.CTkFrame(self, fg_color="transparent")
-        input_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(5, 10))
-        input_frame.grid_columnconfigure(0, weight=1)
-        
-        self.chat_entry = ctk.CTkEntry(
-            input_frame,
-            placeholder_text="💬 Ketik pesan Anda...",
-            font=("Arial", 13),
-            height=45,
-            border_width=1,
-            fg_color="#333333",
-            text_color="white",
-            corner_radius=20
-        )
-        self.chat_entry.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        self.chat_entry.bind("<Return>", self.send_message_event)
-        
-        send_button = ctk.CTkButton(
-            input_frame,
-            text="Kirim 🚀",
-            font=("Arial", 12, "bold"),
-            height=45,
-            width=100,
-            fg_color=self.colors["accent"],
-            hover_color="#ff5252",
-            text_color="white",
-            corner_radius=20,
-            command=self.send_message
-        )
-        send_button.grid(row=0, column=1, sticky="e")
-        
+            btn.grid(row=0, column=i, padx=5, pady=5, sticky="w") 
         self.chat_entry.focus()
         self.show_welcome_message()
-    
-    def show_welcome_message(self):
-        welcome_text = """🎯 **Halo! Selamat datang di GunBot**
 
-Saya **GunBot**, asisten virtual Anda. Silakan tanyakan tentang kategori produk, harga, pengiriman, atau pilih pertanyaan cepat di bawah!"""
-        
+    def show_welcome_message(self):
+        welcome_text = """🎯 
+            **Halo! Selamat datang di GunBot**
+            Saya **GunBot**, asisten virtual Anda.
+            Silakan tanyakan tentang kategori 
+            produk, harga, pengiriman, atau pilih 
+            pertanyaan cepat di bawah!"""
         self.add_message("GunBot", welcome_text, is_bot=True)
-    
+        return welcome_text  # Kembalikan teks agar bisa digunakan di process_command
+
+
     def add_message(self, sender, message, is_bot=False):
         message_frame = ctk.CTkFrame(self.chat_display_frame, fg_color="transparent")
-        message_frame.pack(fill="x", padx=5, pady=3)
+    
+    # Tentukan posisi berdasarkan pengirim
+        if is_bot:
+            message_frame.grid(row=self.chat_row_counter, column=0, sticky="w", pady=5, padx=5)
+            bubble_color = self.colors["light_bg"]
+            text_color = self.colors["text_light"]
+            avatar_text = "🤖"
+            sender_name = "GunBot"
+            sticky_position = "w"
+            header_text_color = self.colors["text_light"]
+        else:
+            message_frame.grid(row=self.chat_row_counter, column=0, sticky="e", pady=5, padx=5)
+            bubble_color = self.colors["primary"]
+            text_color = "black"
+            avatar_text = "👤"
+            sender_name = "Anda"
+            sticky_position = "e"
+            header_text_color = "black"
         
-        bubble_color = self.colors["primary"] if is_bot else self.colors["light_bg"]
-        avatar_text = "🤖" if is_bot else "👤"
-        sender_name = "GunBot" if is_bot else "Anda"
-        text_color = "white" if is_bot else self.colors["text_light"]
-        header_text_color = "#ffffff" if is_bot else self.colors["text_dark"]
-        
+        message_frame.grid_columnconfigure(0, weight=1)
         main_container = ctk.CTkFrame(message_frame, fg_color="transparent")
-        
+        main_container.grid(row=0, column=0, sticky=sticky_position)
+        main_container.grid_columnconfigure(0, weight=0)  # Untuk avatar (jika ada)
+        main_container.grid_columnconfigure(1, weight=1)
+
         if is_bot:
-            main_container.pack(anchor="w")
+            # Avatar untuk bot di kolom 0
             avatar_frame = ctk.CTkFrame(main_container, width=30, height=30, fg_color=bubble_color, corner_radius=15)
-            avatar_frame.pack(side="left", padx=(0, 10))
-            avatar_label = ctk.CTkLabel(avatar_frame, text=avatar_text, font=("Arial", 14), text_color="white")
-            avatar_label.pack(expand=True)
-            content_padx = (0, 100)
-        else:
-            main_container.pack(anchor="e")
-            content_padx = (100, 0)
+            avatar_frame.grid(row=0, column=0, padx=(0, 10), sticky="w")
         
+            avatar_label = ctk.CTkLabel(avatar_frame, text=avatar_text, font=("Arial", 14), text_color=text_color)
+            avatar_label.grid(row=0, column=0, padx=5, pady=5)
+        
+            # Bubble pesan di kolom 1
+            content_frame_column = 1
+        else:
+             content_frame_column = 0
+        # Untuk user, tidak ada avatar, langsung content frame di kolom 1
+
+        # Bubble pesan
         content_frame = ctk.CTkFrame(main_container, corner_radius=15, fg_color=bubble_color)
-        
-        if is_bot:
-            content_frame.pack(side="left", fill="x", expand=True, padx=content_padx)
-        else:
-            content_frame.pack(side="right", fill="x", expand=True, padx=content_padx)
-        
+        content_frame.grid(row=0, column=content_frame_column, sticky=sticky_position)
+        content_frame.grid_columnconfigure(0, weight=1)
+
         time_now = datetime.now().strftime("%H:%M")
         header_label = ctk.CTkLabel(
             content_frame,
-            text=f"{sender_name} • {time_now}",
+            text=f"{time_now}",
             font=("Arial", 10, "bold"),
             text_color=header_text_color
+        )   
+        header_label.grid(row=0, column=1, padx=5, pady=5) 
+   
+        # Header dengan nama pengirim
+        header_label = ctk.CTkLabel(
+            content_frame,
+            text=sender_name,
+            font=("Arial", 10, "bold"),
+            text_color=text_color
         )
-        header_label.pack(anchor="w", padx=10, pady=(8, 3))
-        
+        header_label.grid(row=0, column=0, sticky="w", padx=10, pady=(8, 3))
+    
+    # Isi pesan
         message_label = ctk.CTkLabel(
             content_frame,
             text=message,
             font=("Arial", 12),
             text_color=text_color,
             justify="left",
-            wraplength=450 
+            wraplength=300
         )
-        message_label.pack(anchor="w", padx=10, pady=(0, 8))
+        message_label.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 8))
+    
+        self.chat_row_counter += 1
+        self.chat_display_frame._parent_canvas.yview_moveto(1.0) # Auto-scroll
         
-        self.after(100, self.scroll_to_bottom)
-    
-    def scroll_to_bottom(self):
-        self.chat_display_frame._parent_canvas.yview_moveto(1.0)
-    
-    def send_message(self):
-        user_input = self.chat_entry.get().strip()
-        if not user_input:
-            return
-            
-        self.add_message("Anda", user_input, is_bot=False)
-        self.chat_entry.delete(0, tk.END)
-        
-        self.after(500, lambda: self.process_bot_response(user_input))
-    
-    def send_quick_question(self, question):
-        self.add_message("Anda", question, is_bot=False)
-        self.after(500, lambda: self.process_bot_response(question))
+    def handle_quick_reply(self, command, text):
+        self.add_message("Anda", text, is_bot=False)
+        self.process_command(command)
 
     def send_message_event(self, event):
         self.send_message()
 
-    def on_close(self):
-        self.master_app.chat_open = False
-        self.destroy()
+    def send_message(self):
+        user_input = self.chat_entry.get().strip()
+        self.chat_entry.delete(0, 'end')
 
-    def process_bot_response(self, user_input):
-        user_input_lower = user_input.lower()
-        response = ""
+        if not user_input:
+            return
+
+        self.add_message("Anda", user_input, is_bot=False)
+        self.process_command(user_input.lower())
+
+    def process_command(self, command):
         
-        if any(word in user_input_lower for word in ["kategori", "jenis", "apa saja"]):
-            response = self.get_categories_response()
-        elif any(word in user_input_lower for word in ["semua", "tampilkan", "semua produk"]):
-            response = self.get_all_products_response()
-        elif "laras panjang" in user_input_lower:
-            response = self.get_category_detail("Senjata laras panjang")
-        elif "defender" in user_input_lower:
-            response = self.get_category_detail("Senjata defender")
-        elif "serbu" in user_input_lower:
-            response = self.get_category_detail("Senjata serbu")
-        elif "melee" in user_input_lower or "mele" in user_input_lower:
-            response = self.get_category_detail("Senjata melee")
-        elif "bom" in user_input_lower or "granat" in user_input_lower:
-            response = self.get_category_detail("Granat & Bom")
-        elif "aksesoris" in user_input_lower:
-            response = self.get_category_detail("Aksesoris")
-        elif "harga" in user_input_lower:
-            response = self.get_price_response(user_input_lower)
-        elif any(word in user_input_lower for word in ["pembayaran", "bayar", "metode"]):
+        if any(keyword in command for keyword in ["kategori", "jenis", "produk", "senjata"]):
+            response = self.get_category_response()
+        elif any(keyword in command for keyword in ["pembayaran", "metode", "bayar"]):
             response = self.get_payment_response()
-        elif any(word in user_input_lower for word in ["promo", "diskon", "special"]):
+        elif any(keyword in command for keyword in ["promo", "diskon", "cashback"]):
             response = self.get_promo_response()
-        elif any(word in user_input_lower for word in ["pengiriman", "kirim", "ongkir"]):
+        elif any(keyword in command for keyword in ["kirim", "pengiriman", "kurir"]):
             response = self.get_shipping_response()
-        elif any(word in user_input_lower for word in ["bantu", "pilih", "rekomendasi"]):
-            response = self.get_help_response()
-        elif any(word in user_input_lower for word in ["legal", "berkualitas", "aman"]):
-            response = self.get_legal_response()
-        elif any(word in user_input_lower for word in ["hai", "halo", "hello", "hi"]):
-            response = "Halo! 👋 Ada yang bisa saya bantu hari ini? Silakan tanyakan tentang produk senjata kami!"
+        elif any(keyword in command for keyword in ["legalitas","Legalitas","apakah produk ini legal"]):
+            response = self.get_legalitas_response()
+        elif any(keyword in command for keyword in ["halo", "hai", "selamat datang", "mulai"]):
+            response = self.show_welcome_message() # Restart welcome message
+            return
         else:
             response = self.get_default_response()
-        
+
+
         self.add_message("GunBot", response, is_bot=True)
-    
-    def get_categories_response(self):
-        categories_text = ""
-        for category, info in self.products.items():
-            categories_text += f"{info['icon']} **{category}**\n"
         
-        return f"""📦 **KATEGORI PRODUK KAMI:**
-
-{categories_text}
-
-💡 *Ketik nama kategori untuk melihat detail produk*"""
-    
-    def get_all_products_response(self):
-        products_text = ""
-        for category, info in self.products.items():
-            products_text += f"\n{info['icon']} **{category}:**\n"
-            for item in info["items"]:
-                price = self.prices.get(item, "Hubungi untuk harga")
-                products_text += f"   • {item} - {price}\n"
         
-        return f"""🛍️ **SEMUA PRODUK:**{products_text}
+    # --- BOT RESPONSES ---
 
-📞 *Hubungi CS untuk pemesanan dan info detail*"""
-    
-    def get_category_detail(self, category):
-        if category in self.products:
-            info = self.products[category]
-            products_text = "\n".join([f"• {item} - {self.prices.get(item, 'Hubungi untuk harga')}" 
-                                     for item in info["items"]])
+    def get_category_response(self):
+        if not self.categories:
+            return "Maaf, data produk sedang tidak tersedia. Silakan cek kembali nanti."
             
-            return f"""{info['icon']} **{category.upper()}**
+        res = "🛡️ **KATEGORI PRODUK KAMI:**\n"
+        for cat, data in self.categories.items():
+            # Batasi 3 contoh item saja
+            items = ", ".join(data['items'][:3])
+            if len(data['items']) > 3:
+                 items += ", dan lain-lain..."
+                 
+            res += f"\n**{data['icon']} {cat.upper()}**\n"
+            res += f"   - Contoh: {items}"
+        return res
 
-{products_text}
-
-💎 *Semua produk berkualitas tinggi dengan garansi resmi*"""
-        return "❌ Kategori tidak ditemukan."
-    
-    def get_price_response(self, user_input):
-        for product, price in self.prices.items():
-            if product.lower() in user_input:
-                return f"""💰 **HARGA {product.upper()}:**
-
-**Harga:** {price}
-**Status:** ✅ Tersedia
-**Garansi:** 1 Tahun
-
-📞 *Hubungi CS untuk pemesanan dan nego harga*"""
-        
-        return "❌ Produk tidak ditemukan. Coba sebutkan nama produk seperti: 'Sniper Alpha', 'Karambit Shadow', atau 'Granat Asap'"
-    
     def get_payment_response(self):
-        return """💳 **METODE PEMBAYARAN:**
+        return """
+           **METODE PEMBAYARAN:**
+        • 🏦 Transfer Bank (BCA, BNI, BRI)
+        • 💳 Kartu Kredit (Visa, MasterCard)
+        • 📱 E-Wallet (Gopay, Dana, ShopeePay)
+        • 💰 COD (Cash on Delivery)"""
 
-• 🏦 Transfer Bank (BCA, Mandiri, BNI, BRI)
-• 💳 Kartu Kredit (Visa, MasterCard)
-• 📱 E-Wallet (Gopay, OVO, Dana, ShopeePay)
-• 💰 COD (Cash on Delivery) - Area Terbatas
+    def get_legalitas_response(self):
+        return """
+            Produk telah menerima izin dari kepolisian 
+            dalam penjualan produk. Semua senjata yang 
+            dijual sudah melalui proses legal dan 
+            memiliki dokumen yang diperlukan.Kami 
+            menjamin keaslian dan legalitas setiap
+            produk yang dijual."""
 
-🔒 **Pembayaran 100% aman dan terjamin**
-📄 Faktur pajak dan dokumentasi lengkap"""
-    
     def get_promo_response(self):
-        return """🎉 **PROMO SPESIAL BULAN INI!**
+        return """
+            🎉 **PROMO SPESIAL BULAN INI!**
+            🔥 **DISKON 25%** untuk pembelian pertama
+            🚚 **GRATIS ONGKIR** min. belanja 
+                Rp 5.000.000
+            💳 **CASHBACK 15%** menggunakan e-wallet
+            🎁 **BUNDLE SPECIAL** senjata + aksesoris
+            ⏰ **Promo berlaku hingga akhir bulan!**
+            📞 *Hubungi CS untuk klaim promo*"""
 
-🔥 **DISKON 25%** untuk pembelian pertama
-🚚 **GRATIS ONGKIR** min. belanja Rp 5.000.000
-💳 **CASHBACK 15%** menggunakan e-wallet
-🎁 **BUNDLE SPECIAL** senjata + aksesoris
-
-⏰ **Promo berlaku hingga akhir bulan!**
-📞 *Hubungi CS untuk klaim promo*"""
-    
     def get_shipping_response(self):
-        return """🚚 **INFORMASI PENGIRIMAN:**
+        return """
+            🚚 **INFORMASI PENGIRIMAN:**
+            📍 **Jakarta & Sekitarnya:**
+                 1-2 hari kerja
+            📍 **Pulau Jawa:** 2-3 hari kerja
+            📍 **Luar Jawa:** 3-7 hari kerja
+            📍 **Same-day delivery** (area tertentu)
+            🔒 **Packaging aman dan discreet**"""
 
-📍 **Jakarta & Sekitarnya:** 1-2 hari kerja
-📍 **Pulau Jawa:** 2-3 hari kerja  
-📍 **Luar Jawa:** 3-7 hari kerja
-📍 **Same-day delivery** (area tertentu)
-
-🎁 **Gratis ongkir** untuk pembelian di atas Rp 5.000.000!
-🔒 **Packaging aman dan discreet**"""
-    
-    def get_help_response(self):
-        return """🤖 **BANTUAN PEMILIHAN PRODUK**
-
-Beri tahu saya kebutuhan Anda:
-• 🎯 **Budget** yang tersedia
-• 🛡️ **Kategori** produk yang diinginkan
-• ⚔️ **Kebutuhan spesifik** (pertahanan, olahraga, koleksi)
-
-**Contoh:** 'Saya cari senjata defender budget 5 juta'
-'Butuh senjata laras panjang untuk olahraga'
-
-Atau pilih kategori produk untuk melihat opsi!"""
-    
-    def get_legal_response(self):
-        return """🔒 **LEGALITAS & KUALITAS**
-
-✅ **SEMUA PRODUK LEGAL** berizin resmi
-✅ **Dokumentasi lengkap** dan faktur pajak
-✅ **Berkualitas tinggi** dengan standar internasional
-✅ **Garansi resmi** 1 tahun
-✅ **Pelatihan penggunaan** gratis
-
-🏆 **Toko terpercaya sejak 2010**"""
-    
     def get_default_response(self):
-        return """🤔 **Maaf, saya belum paham pertanyaannya.**
-
-Coba tanyakan tentang:
-• 🛍️ Kategori produk senjata
-• 💰 Harga produk tertentu  
-• 🎁 Info promo dan diskon
-• 💳 Metode pembayaran
-• 🚚 Waktu pengiriman
-• 🔒 Legalitas produk
-
-**Atau gunakan tombol pertanyaan cepat di bawah!**"""
-
-# Fitur: Resizable, Pilih Pembayaran, Kontrol Kuantitas Item
-class PaymentWindow(ctk.CTkToplevel):
-    def __init__(self, master, cart_items, cart_total, format_price_func, weapons_data):
-        super().__init__(master)
-        self.master_app = master
-        # self.cart_items = cart_items <--- Dihapus, akan diambil langsung di refresh_display
-        self.cart_total = cart_total
-        self.format_price = format_price_func
-        self.weapons_data = weapons_data 
-        self.selected_payment_method = tk.StringVar(value="") 
-        
-        # Tambahan: Menyimpan mapping Nama -> Path Gambar/Data
-        self.weapon_data_map = {item['Nama Senjata']: item for item in weapons_data}
-        self.image_references = {} # Untuk mencegah garbage collection gambar
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # MODIFIKASI: STATE BARU UNTUK SELEKSI ITEM CHECKOUT
-        # Menggunakan dictionary untuk melacak status terpilih (tk.BooleanVar) per nama item
-        self.selected_items_state = {} 
-
-
-        self.title("Proses Pembayaran")
-        self.geometry("500x500") 
-        # MODIFIKASI: Mengizinkan jendela diperbesar (Resizable)
-        self.resizable(True, True) 
-        self.grab_set() 
-        
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1) # Baris utama untuk konten
-
-        self.payment_methods = {
-            "Transfer Bank": ["BCA", "Mandiri", "BNI", "BRI"],
-            "Kartu Kredit": ["Visa", "MasterCard"],
-            "E-Wallet": ["Gopay", "OVO", "ShopeePay", "Dana"],
-            "COD": ["Cash on Delivery (Area Terbatas)"]
-        }
-        
-        self.create_widgets()
-        self.refresh_display()
-
-    def create_widgets(self):
-        # Header
-        title_label = ctk.CTkLabel(self,
-                                   text="jangan lupa bayar yaa!💳",
-                                   font=ctk.CTkFont(size=24, weight="bold"))
-        title_label.grid(row=0, column=0, padx=20, pady=(15, 10), sticky="ew")
-
-        # Scrollable Frame untuk Detail Keranjang & Pilihan Pembayaran
-        self.main_content_frame = ctk.CTkScrollableFrame(self, 
-                                                     label_text="Detail Transaksi", 
-                                                     fg_color="gray15")
-        self.main_content_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew") 
-        self.main_content_frame.grid_columnconfigure(0, weight=1)
-
-        # Footer Summary
-        self.summary_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.summary_frame.grid(row=2, column=0, padx=20, pady=(10, 5), sticky="ew")
-        self.summary_frame.grid_columnconfigure(0, weight=1)
-        self.summary_frame.grid_columnconfigure(1, weight=1)
-
-        total_label = ctk.CTkLabel(self.summary_frame,
-                                   text="TOTAL AKHIR:",
-                                   font=ctk.CTkFont(size=20, weight="bold"))
-        total_label.grid(row=0, column=0, sticky="w", padx=10)
-
-        self.total_amount_label = ctk.CTkLabel(self.summary_frame,
-                                               text="", 
-                                               text_color="#00FF7F",
-                                               font=ctk.CTkFont(size=24, weight="bold"))
-        self.total_amount_label.grid(row=0, column=1, sticky="e", padx=10)
-        
-        # Action Buttons
-        action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        action_frame.grid(row=3, column=0, padx=20, pady=(5, 20), sticky="ew")
-        action_frame.grid_columnconfigure((0, 1), weight=1)
-
-        back_button = ctk.CTkButton(action_frame,
-                                    text="⬅️ Kembali ke Etalase",
-                                    command=self.destroy,
-                                    fg_color="red")
-        back_button.grid(row=0, column=0, padx=(0, 10), sticky="ew")
-        
-        checkout_button = ctk.CTkButton(action_frame,
-                                        text="💳 Lakukan Pembayaran",
-                                        fg_color="#00FF7F",
-                                        hover_color="#00B359",
-                                        text_color="#000000",
-                                        command=self.process_payment)
-        checkout_button.grid(row=0, column=1, padx=(10, 0), sticky="ew")
-
-    def refresh_display(self):
-        """Memuat ulang semua konten keranjang dan total harga."""
-        
-        # PERBAIKAN VITAL: Selalu ambil data keranjang terbaru dari aplikasi utama
-        self.cart_items = self.master_app.cart_items
-
-        for widget in self.main_content_frame.winfo_children():
-            widget.destroy()
-
-        self.create_cart_detail_section(self.main_content_frame)
-
-        separator = ctk.CTkFrame(self.main_content_frame, height=2, fg_color="gray30")
-        separator.pack(fill="x", padx=10, pady=15)
-
-        self.create_payment_selection_section(self.main_content_frame)
-
-        # NOTE: self.cart_total diupdate di update_checkout_total, bukan diambil dari master_app.
-        # self.cart_total = self.master_app.cart_total # DIHAPUS
-        # self.total_amount_label.configure(text=self.format_price(self.cart_total)) # DIHAPUS
-        
-        if not self.selected_payment_method.get() and self.cart_total > 0:
-            self.selected_payment_method.set(self.payment_methods["Transfer Bank"][0])
-
-    # FUNGSI BARU: Menghitung ulang total berdasarkan Checkbox yang dipilih
-    def update_checkout_total(self):
-        """Menghitung ulang total pembayaran hanya berdasarkan item yang terpilih."""
-        
-        new_total = 0
-        
-        # Iterasi melalui state pilihan, bukan hanya self.cart_items
-        for item_name, is_selected_var in self.selected_items_state.items():
-            # Cek apakah item ini masih ada di keranjang
-            if item_name in self.cart_items:
-                # Cek apakah checkbox-nya terpilih
-                if is_selected_var.get():
-                    # Tambahkan total harga item ke new_total
-                    new_total += self.cart_items[item_name]['total_price']
-        
-        # Perbarui tampilan label total
-        self.total_amount_label.configure(text=self.format_price(new_total))
-        # Simpan total baru ini ke self.cart_total (penting untuk process_payment)
-        self.cart_total = new_total
-
-    def create_cart_detail_section(self, parent_frame):
-        """Membuat bagian detail keranjang dengan tombol tambah/kurang, gambar, dan CHECKBOX."""
-        
-        item_container_frame = ctk.CTkFrame(parent_frame, fg_color="gray25", corner_radius=10)
-        item_container_frame.pack(fill="x", padx=10, pady=(10, 5))
-
-        header_label = ctk.CTkLabel(item_container_frame, 
-                                    # MODIFIKASI TEXT
-                                    text="list isi keranjang kamu 😌: (Pilih item untuk Checkout)", 
-                                    font=ctk.CTkFont(size=16, weight="bold"))
-        header_label.pack(anchor="w", padx=15, pady=(10, 5))
-
-        # Menggunakan self.cart_items yang sudah diperbarui di refresh_display
-        if not self.cart_items:
-            no_item_label = ctk.CTkLabel(item_container_frame, text="Keranjang kosong. Tidak ada yang bisa di-checkout.", text_color="gray")
-            no_item_label.pack(padx=15, pady=20)
-            self.update_checkout_total() # Panggil update_checkout_total untuk memastikan total 0
-            return
-
-        # Reset references
-        self.image_references.clear()
-        
-        # MODIFIKASI: Inisialisasi/Cleanup state seleksi
-        # Buat salinan kunci state saat ini
-        items_to_remove_from_state = list(self.selected_items_state.keys()) 
-        
-        for name in self.cart_items.keys():
-            if name not in self.selected_items_state:
-                 # Jika ada item baru, inisialisasi sebagai terpilih (True)
-                self.selected_items_state[name] = tk.BooleanVar(value=True) 
-            # Jika item ditemukan, hapus dari daftar yang akan dihapus
-            if name in items_to_remove_from_state:
-                items_to_remove_from_state.remove(name)
-
-        # Hapus state untuk item yang tidak ada lagi di cart
-        for name in items_to_remove_from_state:
-            del self.selected_items_state[name]
-
-        for name, data in self.cart_items.items():
-            item_data_frame = ctk.CTkFrame(item_container_frame, fg_color="transparent")
-            item_data_frame.pack(fill="x", padx=10, pady=5)
-            # MODIFIKASI GRID: Kolom 0 Checkbox, Kolom 1 Gambar, Kolom 2 Nama, Kolom 3 Qty, Kolom 4 Harga
-            item_data_frame.grid_columnconfigure(0, weight=0) # Checkbox
-            item_data_frame.grid_columnconfigure(1, weight=0) # Gambar
-            item_data_frame.grid_columnconfigure(2, weight=2) # Nama
-            item_data_frame.grid_columnconfigure(3, weight=1) # Qty Control
-            item_data_frame.grid_columnconfigure(4, weight=1) # Harga
-            
-            # --- 0. CHECKBOX PEMILIHAN ---
-            # Menggunakan CTkCheckBox yang di-customize (lingkaran)
-            checkbox = ctk.CTkCheckBox(
-                item_data_frame, 
-                text="", 
-                variable=self.selected_items_state[name], 
-                command=self.update_checkout_total, # Panggil update total saat diubah
-                width=20, height=20, corner_radius=10, 
-                fg_color="#00FF7F" 
-            )
-            checkbox.grid(row=0, column=0, padx=(10, 5), sticky="w")
-
-
-            # --- 1. MENAMPILKAN GAMBAR (Pindah ke Kolom 1) ---
-            weapon_info = self.weapon_data_map.get(name)
-            if weapon_info:
-                image_path = os.path.join(self.base_dir, 'picture_resource', weapon_info['Gambar'])
-                image_size = (50, 30) # Ukuran kecil untuk keranjang
-
-                try:
-                    original_image = Image.open(image_path)
-                    resized_image = original_image.resize(image_size, Image.Resampling.LANCZOS)
-                    weapon_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=image_size)
-                    
-                    # Simpan referensi
-                    self.image_references[name] = weapon_image
-
-                    image_label = ctk.CTkLabel(item_data_frame, image=weapon_image, text="")
-                    image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
-                except:
-                    # Fallback jika gambar tidak ditemukan
-                    image_label = ctk.CTkLabel(item_data_frame, text="🖼️", font=ctk.CTkFont(size=20))
-                    image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
-            else:
-                 # Fallback jika data tidak ditemukan
-                image_label = ctk.CTkLabel(item_data_frame, text="❓", font=ctk.CTkFont(size=20))
-                image_label.grid(row=0, column=1, padx=(5, 5), sticky="w")
-            
-            
-            # --- 2. NAMA BARANG (Pindah ke Kolom 2) ---
-            name_label = ctk.CTkLabel(item_data_frame,
-                                      text=name,
-                                      font=ctk.CTkFont(size=14, weight="bold"),
-                                      justify="left",
-                                      wraplength=150)
-            name_label.grid(row=0, column=2, padx=10, sticky="w")
-
-            # Kontrol Kuantitas (Frame) - Pindah ke Kolom 3
-            qty_control_frame = ctk.CTkFrame(item_data_frame, fg_color="gray20")
-            qty_control_frame.grid(row=0, column=3, padx=5, sticky="ew")
-            qty_control_frame.grid_columnconfigure((0, 2), weight=1)
-
-            minus_button = ctk.CTkButton(qty_control_frame, 
-                                        text="➖", 
-                                        width=30,
-                                        # MODIFIKASI COMMAND: Memastikan total diupdate setelah kuantitas berubah
-                                        command=lambda n=name: [self.update_item_quantity(n, -1)]) 
-            minus_button.grid(row=0, column=0, padx=2, pady=5)
-
-            qty_label = ctk.CTkLabel(qty_control_frame, 
-                                            text=f"{data['quantity']}", 
-                                            font=ctk.CTkFont(size=14, weight="bold"))
-            qty_label.grid(row=0, column=1, padx=2, pady=5)
-
-            plus_button = ctk.CTkButton(qty_control_frame, 
-                                        text="➕", 
-                                        width=30,
-                                        # MODIFIKASI COMMAND: Memastikan total diupdate setelah kuantitas berubah
-                                        command=lambda n=name: [self.update_item_quantity(n, 1)])
-            plus_button.grid(row=0, column=2, padx=2, pady=5)
-            
-            # Subtotal (Menggunakan data yang sudah diperbarui) - Pindah ke Kolom 4
-            price_label = ctk.CTkLabel(item_data_frame,
-                                       text=self.format_price(data['total_price']),
-                                       text_color="#00FF7F",
-                                       font=ctk.CTkFont(size=14, weight="bold"))
-            price_label.grid(row=0, column=4, padx=10, sticky="e")
-            
-        # Blok kode ini dihilangkan/dijadikan komentar untuk menghapus tampilan subtotal barang
-        # total_summary_frame = ctk.CTkFrame(item_container_frame, fg_color="transparent")
-        # total_summary_frame.pack(fill="x", padx=10, pady=(10, 10))
-        # total_summary_frame.grid_columnconfigure(0, weight=1)
-        
-        # ctk.CTkLabel(total_summary_frame, text="Subtotal Barang:", font=ctk.CTkFont(size=16)).grid(row=0, column=0, sticky="w", padx=10)
-        # # Label ini akan di-update oleh update_checkout_total
-        # ctk.CTkLabel(total_summary_frame, text=self.format_price(self.master_app.cart_total), font=ctk.CTkFont(size=16, weight="bold"), text_color="#00FF7F").grid(row=0, column=1, sticky="e", padx=10)
-
-        # Panggil perhitungan total setelah semua widget dibuat (penting untuk tampilan awal)
-        self.update_checkout_total() 
-
-    def create_payment_selection_section(self, parent_frame):
-        """Membuat bagian pemilihan metode pembayaran."""
-
-        payment_label = ctk.CTkLabel(parent_frame, text="Pilih Cara Pembayaran:", 
-                                     font=ctk.CTkFont(size=18, weight="bold"))
-        payment_label.pack(anchor="w", padx=10, pady=(10, 5))
-        
-        for category, methods in self.payment_methods.items():
-            category_label = ctk.CTkLabel(parent_frame, text=f"**{category}**",
-                                          font=ctk.CTkFont(size=15, weight="bold"),
-                                          text_color="#A8D0E6") 
-            category_label.pack(anchor="w", padx=15, pady=(8, 3))
-
-            for method in methods:
-                method_rb = ctk.CTkRadioButton(parent_frame,
-                                               text=method,
-                                               variable=self.selected_payment_method,
-                                               value=method,
-                                               font=ctk.CTkFont(size=14))
-                method_rb.pack(anchor="w", padx=25, pady=3)
-        
-    def update_item_quantity(self, item_name, delta):
-        """Memperbarui kuantitas item di keranjang utama."""
-        
-        # Mengambil data dari keranjang utama
-        cart_data = self.master_app.cart_items
-        
-        if item_name not in cart_data:
-            return
-
-        unit_price = cart_data[item_name]['price_per_unit']
-        current_qty = cart_data[item_name]['quantity']
-        new_qty = current_qty + delta
-
-        if new_qty < 0:
-            return 
-
-        if new_qty == 0:
-            del self.master_app.cart_items[item_name]
-            # Hapus state pilihan ketika item dihapus
-            if item_name in self.selected_items_state:
-                del self.selected_items_state[item_name]
-        else:
-            self.master_app.cart_items[item_name]['quantity'] = new_qty
-            self.master_app.cart_items[item_name]['total_price'] = new_qty * unit_price
-
-        # Memperbarui total dan count di footer aplikasi utama
-        self.master_app.update_cart_display() 
-        
-        # Merefresh tampilan PaymentWindow dengan data terbaru
-        # refresh_display akan memanggil create_cart_detail_section, yang akan memanggil update_checkout_total
-        self.refresh_display()
-
-
-    def process_payment(self):
-        """Logika simulasi pembayaran."""
-        
-        # self.cart_total sudah di-update oleh update_checkout_total
-        
-        # MODIFIKASI: Pesan peringatan disesuaikan dengan logika checkout
-        if self.cart_total == 0:
-            messagebox.showwarning("Peringatan", "Total pembayaran 0. Silakan pilih item untuk di-checkout atau tambahkan item ke keranjang.")
-            return
-
-        selected_method = self.selected_payment_method.get()
-
-        if not selected_method:
-            messagebox.showwarning("Peringatan", "Silakan pilih salah satu metode pembayaran.")
-            return
-
-        # MODIFIKASI: Logika untuk menghapus HANYA item yang terpilih untuk pembayaran
-        items_to_keep = {}
-        for item_name, data in self.master_app.cart_items.items():
-            is_selected_var = self.selected_items_state.get(item_name)
-            
-            # Jika item TIDAK terpilih untuk checkout (atau state-nya entah mengapa hilang), maka item tersebut dipertahankan.
-            # is_selected_var is None hanya terjadi jika ada bug, tapi jika ada, kita asumsikan TIDAK terpilih.
-            if is_selected_var is None or not is_selected_var.get():
-                items_to_keep[item_name] = data
-
-        # Simulasi tampilan detail transaksi
-        if "Transfer Bank" in selected_method or selected_method in self.payment_methods["Transfer Bank"]:
-            detail_msg = f"Silakan transfer ke rekening **{selected_method}** a/n PT GUN INDONESIA. Nomor Rekening akan dikirim via email."
-        elif "Kartu Kredit" in selected_method or selected_method in self.payment_methods["Kartu Kredit"]:
-            detail_msg = f"Anda akan diarahkan ke laman pembayaran aman untuk memasukkan detail kartu **{selected_method}**."
-        elif selected_method in self.payment_methods["E-Wallet"]:
-            detail_msg = f"Anda akan menerima notifikasi pembayaran di aplikasi **{selected_method}** Anda."
-        elif "COD" in selected_method:
-            detail_msg = "Tim kami akan menghubungi Anda untuk konfirmasi alamat dan jadwal pengiriman Cash on Delivery."
-        else:
-            detail_msg = "Detail transaksi akan dikirimkan ke email terdaftar Anda."
-
-
-        messagebox.showinfo("Pembayaran Diproses", 
-                            f"Transaksi sedang diproses dengan metode:\n**{selected_method}**\n\nTotal: {self.format_price(self.cart_total)}\n\n{detail_msg}\n\nTerima kasih atas pembelian Anda!")
-        
-        # Setelah sukses, reset keranjang utama hanya dengan item yang tidak di-checkout (items_to_keep)
-        self.master_app.cart_items = items_to_keep
-        self.master_app.update_cart_display()
-        self.destroy()
-
-
-# KELAS APLIKASI UTAMA
-class WeaponShowcaseApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-
-        # Konfigurasi Jendela
-        self.title("Etalase Toko Senjata (Demo)")
-        self.geometry("1000x700")
-
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=0) # Header
-        self.grid_rowconfigure(1, weight=1) # Etalase Scrollable
-        self.grid_rowconfigure(2, weight=0) # Footer
-
-        # DATA PRODUK SENJATA
-        self.weapons = all_data
-
-        # STATE KERANJANG BELANJA & CHAT
-        # PERUBAHAN KRITIS: Menggunakan dictionary untuk melacak kuantitas
-        self.cart_items = {} 
-        self.cart_total = 0
-        self.chat_open = False 
-
-        # --- MEMUAT LOGO BARU DARI FILE ---
-        LOGO_PATH = os.path.join(os.getcwd(), "logo.png")
-        LOGO_SIZE = (50, 50)
-
-        self.logo_found = False
-        try:
-            logo_image_pil = Image.open(LOGO_PATH)
-            logo_resized = logo_image_pil.resize(LOGO_SIZE, Image.Resampling.LANCZOS)
-            self.app_logo = ctk.CTkImage(light_image=logo_resized, dark_image=logo_resized, size=LOGO_SIZE)
-            self.logo_found = True
-        except FileNotFoundError:
-            print(f"Peringatan: File logo '{LOGO_PATH}' tidak ditemukan. Menggunakan teks fallback.")
-        except Exception as e:
-            print(f"Peringatan: Gagal memuat/mengubah ukuran logo: {e}. Menggunakan teks fallback.")
-
-        # --- HEADER APLIKASI (Judul & Search Bar) - Row 0 ---
-        self.header_frame = ctk.CTkFrame(self, fg_color="transparent") 
-        self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
-        
-        self.header_frame.grid_columnconfigure(0, weight=1)
-        self.header_frame.grid_columnconfigure(1, weight=0)
-
-        title_logo_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
-        title_logo_frame.grid(row=0, column=0, sticky="w")
-
-        title_logo_frame.grid_columnconfigure(0, weight=0)
-        title_logo_frame.grid_columnconfigure(1, weight=1)
-
-        if self.logo_found:
-            logo_label = ctk.CTkLabel(title_logo_frame, image=self.app_logo, text="")
-            logo_label.grid(row=0, column=0, padx=(0, 10), pady=(0, 0), sticky="w")
-        
-        self.title_label = ctk.CTkLabel(title_logo_frame, 
-                                          text=" THE GUN ADDICTION ",
-                                          font=ctk.CTkFont(size=24, weight="bold"))
-        self.title_label.grid(row=0, column=1, pady=(10, 5), sticky="w") 
-
-        self.search_bar = ctk.CTkEntry(self.header_frame,
-                                         placeholder_text="🔍 Cari nama senjata...",
-                                         width=400,
-                                         height=40,
-                                         corner_radius=20,
-                                         font=ctk.CTkFont(size=16))
-        self.search_bar.grid(row=0, column=1, padx=(10, 0), pady=(0, 10), sticky="e") 
-        self.search_bar.bind("<KeyRelease>", self.filter_weapons)
-        
-        # --- KONTEN ETALASE (Scrollable) - Row 1 ---
-        self.scrollable_frame = ctk.CTkScrollableFrame(self, label_text="Koleksi Senjata", width=950)
-        self.scrollable_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
-
-        for i in range(3):
-            self.scrollable_frame.grid_columnconfigure(i, weight=1, minsize=300)
-            
-        # --- FOOTER APLIKASI (WIDGET CHAT & KERANJANG) - Row 2 ---
-        self.footer_frame = ctk.CTkFrame(self, fg_color="gray15", height=70, corner_radius=0)
-        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=0, pady=0) 
-        
-        self.footer_frame.grid_columnconfigure(0, weight=1) 
-        self.footer_frame.grid_columnconfigure(1, weight=0) 
-        self.footer_frame.grid_columnconfigure(2, weight=0) 
-
-        # 1. ICON CUSTOMER SERVICE CHAT
-        self.chat_frame = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
-        self.chat_frame.grid(row=0, column=1, padx=(20, 10), pady=10, sticky="e") 
-        
-        self.chat_icon = ctk.CTkLabel(self.chat_frame, 
-            text="💬", width=50, height=50, corner_radius=10,
-            fg_color="gray20", font=ctk.CTkFont(size=30), cursor="hand2") 
-        self.chat_icon.grid(row=0, column=0, padx=(0, 10), sticky="nsew")
-        self.chat_icon.bind("<Button-1>", self.open_chat_window)
-        
-        chat_label = ctk.CTkLabel(self.chat_frame, 
-                                  text="Layanan\nChat", 
-                                  font=ctk.CTkFont(size=12))
-        chat_label.grid(row=0, column=1, sticky="w")
-        
-        # 2. FRAME DETAIL KERANJANG 
-        self.cart_frame = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
-        self.cart_frame.grid(row=0, column=2, padx=(10, 20), pady=10, sticky="e") 
-        self.cart_frame.grid_columnconfigure(1, weight=1) 
-
-        self.cart_interactive_icon = ctk.CTkLabel(self.cart_frame, 
-            text="🛒", width=50, height=50, corner_radius=10,
-            fg_color="gray20", font=ctk.CTkFont(size=30), cursor="hand2") 
-        self.cart_interactive_icon.grid(row=0, column=0, rowspan=1, padx=(0, 10), sticky="nsew")
-        self.cart_interactive_icon.bind("<Button-1>", self.open_checkout_window)
-
-        detail_frame = ctk.CTkFrame(self.cart_frame, fg_color="transparent")
-        detail_frame.grid(row=0, column=1, padx=0, pady=0, sticky="w") 
-
-        self.cart_count_label = ctk.CTkLabel(detail_frame, 
-                                             text="(0 item)", 
-                                             font=ctk.CTkFont(size=14, weight="bold"))
-        self.cart_count_label.grid(row=0, column=0, sticky="w", pady=(15, 15)) 
-        
-        self.display_weapons()
-
-    # --- HELPER FUNCTIONS ---
-    
-    def open_chat_window(self, event=None):
-        if self.chat_open:
-            return 
-            
-        self.chat_open = True
-        chat_window = ShoppingChatBot(master=self)
-        
-    def _parse_price(self, price_str):
-        price_str = str(price_str)
-        try:
-            clean_str = price_str.replace("Rp ", "").replace(".", "")
-            return int(clean_str)
-        except Exception as e:
-            print(f"Error parsing price string: {price_str}. Error: {e}")
-            return 0
-
-    def _format_price(self, price_int):
-        return f"Rp {price_int:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
-    
-    # Fungsi Helper Baru untuk mencari data senjata
-    def get_weapon_data_by_name(self, name):
-        """Mencari data senjata lengkap berdasarkan Nama Senjata."""
-        for weapon in self.weapons:
-            if weapon['Nama Senjata'] == name:
-                return weapon
-        return None
-
-    # PERUBAHAN: Logika update display untuk dictionary
-    def update_cart_display(self):
-        self.cart_total = 0
-        item_count = 0
-        
-        for item_data in self.cart_items.values():
-            self.cart_total += item_data.get('total_price', 0)
-            item_count += item_data.get('quantity', 0)
-            
-        self.cart_count_label.configure(text=f"({item_count} item)")
-        
-        if item_count > 0:
-            self.cart_interactive_icon.configure(fg_color="#006400") # Green when full
-        else:
-            self.cart_interactive_icon.configure(fg_color="gray20")
-
-    # PERUBAHAN: Logika reset cart untuk dictionary
-    def reset_cart(self):
-        self.cart_items = {}
-        self.cart_total = 0
-        self.update_cart_display()
-
-    # PERUBAHAN: Memanggil PaymentWindow dan mengirim data senjata
-    def open_checkout_window(self, event=None):
-        checkout = PaymentWindow(
-            master=self,
-            cart_items=self.cart_items, # Data keranjang
-            cart_total=self.cart_total, # Total harga
-            format_price_func=self._format_price,
-            weapons_data=self.weapons # Mengirim data senjata lengkap
-        )
-
-    # PERUBAHAN: Logika buy_weapon untuk dictionary
-    def buy_weapon(self, weapon_data):
-        weapon_name = weapon_data['Nama Senjata']
-        parsed_price = self._parse_price(weapon_data['Harga'])
-        
-        if weapon_name in self.cart_items:
-            self.cart_items[weapon_name]['quantity'] += 1
-            self.cart_items[weapon_name]['total_price'] += parsed_price
-        else:
-            self.cart_items[weapon_name] = {
-                'price_per_unit': parsed_price,
-                'quantity': 1,
-                'total_price': parsed_price
-            }
-        
-        self.update_cart_display()
-        print(f"'{weapon_name}' berhasil ditambahkan ke keranjang.")
-
-    # PERUBAHAN: Logika remove_weapon untuk dictionary
-    def remove_weapon(self, weapon_data):
-        weapon_name = weapon_data['Nama Senjata']
-        
-        if weapon_name not in self.cart_items:
-            messagebox.showinfo("Informasi", f"'{weapon_name}' tidak ada di keranjang.")
-            print(f"Gagal mengurangi: '{weapon_name}' tidak ada di keranjang.")
-            return
-
-        parsed_price = self.cart_items[weapon_name]['price_per_unit']
-        
-        if self.cart_items[weapon_name]['quantity'] > 1:
-            self.cart_items[weapon_name]['quantity'] -= 1
-            self.cart_items[weapon_name]['total_price'] -= parsed_price
-            print(f"Satu unit '{weapon_name}' berhasil dikurangi dari keranjang.")
-        else:
-            # Hapus item jika kuantitasnya menjadi 0
-            del self.cart_items[weapon_name]
-            print(f"'{weapon_name}' dihapus dari keranjang.")
-            
-        self.update_cart_display()
-
-    # LOGIKA ETALASE
-    def clear_scrollable_frame(self):
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
-    def filter_weapons(self, event=None):
-        search_query = self.search_bar.get().lower()
-        
-        if not search_query:
-            self.display_weapons(self.weapons)
-            return
-
-        filtered = [
-            weapon for weapon in self.weapons 
-            if search_query in weapon['Nama Senjata'].lower()
-        ]
-        
-        self.display_weapons(filtered)
-        
-    def display_weapons(self, weapons_to_display=None):
-        self.clear_scrollable_frame() 
-
-        weapons_data = weapons_to_display if weapons_to_display is not None else self.weapons
-
-        if not weapons_data:
-            no_results_label = ctk.CTkLabel(self.scrollable_frame,
-                                            text="Tidak ada senjata yang cocok dengan kueri pencarian.",
-                                            font=ctk.CTkFont(size=18, weight="bold"),
-                                            text_color="gray")
-            no_results_label.grid(row=0, column=0, columnspan=3, padx=20, pady=50)
-            return
-
-        row = 0
-        col = 0
-        max_cols = 3 
-
-        for weapon in weapons_data:
-            self.create_weapon_item(self.scrollable_frame, weapon, row, col)
-
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
-
-    def create_weapon_item(self, parent_frame, weapon_data, row, col):
-        """Membuat widget untuk satu item produk senjata."""
-
-        item_frame = ctk.CTkFrame(parent_frame, corner_radius=10, border_width=2)
-        item_frame.grid(row=row, column=col, padx=15, pady=15, sticky="nsew")
-        item_frame.grid_columnconfigure(0, weight=1)
-
-        # Menambahkan Gambar Produk
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        image_path = os.path.join(base_dir, 'picture_resource', weapon_data['Gambar'])
-        image_size = (250, 150) 
-
-        try:
-            original_image = Image.open(image_path)
-            resized_image = original_image.resize(image_size, Image.Resampling.LANCZOS)
-            weapon_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=image_size)
-
-            image_label = ctk.CTkLabel(item_frame, image=weapon_image, text="")
-            image_label.grid(row=0, column=0, padx=10, pady=(10, 5))
-            
-        except FileNotFoundError:
-            no_image_label = ctk.CTkLabel(item_frame, 
-                                          text=f"File gambar: '{weapon_data['Gambar']}'\nTIDAK DITEMUKAN!",
-                                          text_color="red",
-                                          font=ctk.CTkFont(size=14, slant="italic"))
-            no_image_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
-        except Exception as e:
-            error_label = ctk.CTkLabel(item_frame, text=f"Error memuat gambar: {e}", text_color="red")
-            error_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="nsew")
-
-        # Detail Produk
-        name_label = ctk.CTkLabel(item_frame,
-                                  text=weapon_data['Nama Senjata'],
-                                  font=ctk.CTkFont(size=18, weight="bold"))
-        name_label.grid(row=1, column=0, padx=10, pady=(5, 5), sticky="w")
-
-        price_label = ctk.CTkLabel(item_frame,
-                                   text=weapon_data['Harga'],
-                                   text_color="#00FF7F", 
-                                   font=ctk.CTkFont(size=16, weight="bold"))
-        price_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
-
-        desc_label = ctk.CTkLabel(item_frame,
-                                  text=weapon_data['Deskripsi'],
-                                  wraplength=280,
-                                  justify="left")
-        desc_label.grid(row=3, column=0, padx=10, pady=5, sticky="w")
-
-        action_button_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
-        action_button_frame.grid(row=4, column=0, padx=10, pady=(5, 10), sticky="ew")
-        action_button_frame.grid_columnconfigure((0, 1), weight=1) 
-        
-        remove_button = ctk.CTkButton(action_button_frame,
-                                      text="➖ Kurangi",
-                                      fg_color="red",
-                                      hover_color="#8B0000",
-                                      command=lambda data=weapon_data: self.remove_weapon(data))
-        remove_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-
-        buy_button = ctk.CTkButton(action_button_frame,
-                                   text="➕ Tambah",
-                                   command=lambda data=weapon_data: self.buy_weapon(data))
-        buy_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
-
-# aplikasi dijalankan
-if __name__ == "__main__":
-    app = WeaponShowcaseApp()
-    app.mainloop()
+        return """
+            Maaf, saya hanya bisa menjawab 
+            pertanyaan seputar kategori produk,
+            pembayaran, promo, dan pengiriman.
+            Coba ketik salah satu: **kategori**,
+            **pembayaran**, **promo**, 
+            **legalitas**, atau **pengiriman**.""" 
